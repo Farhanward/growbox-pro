@@ -1,1 +1,1 @@
-# llama.cpp binaries are downloaded by CI workflow build-mac.yml — do not commit.
+# Local-only — binaries are gitignored.

@@ -15,3 +15,7 @@ src-tauri/gen/
 
 # Local LLM weights (never commit)
 *.gguf
+
+# Bundled llama.cpp binaries (CI fetches them per platform)
+src-tauri/resources/llama/*
+!src-tauri/resources/llama/.gitkeep

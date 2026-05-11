@@ -14,9 +14,11 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tokio::io::AsyncWriteExt;
 
-const MODEL_URL: &str = "https://huggingface.co/FreedomIntelligence/AceGPT-v2-8B-Chat-GGUF/resolve/main/AceGPT-v2-8B-Chat-Q5_K_M.gguf";
-const MODEL_FILENAME: &str = "acegpt-v2-8b-q5km.gguf";
-const MODEL_SIZE_FALLBACK: u64 = 5_800_000_000;
+// Aya Expanse 8B (Cohere) — multilingual incl. Arabic + Gulf dialects.
+// Open-license (CC-BY-NC), no HF auth/token required.
+const MODEL_URL: &str = "https://huggingface.co/bartowski/aya-expanse-8b-GGUF/resolve/main/aya-expanse-8b-Q5_K_M.gguf";
+const MODEL_FILENAME: &str = "aya-expanse-8b-q5km.gguf";
+const MODEL_SIZE_FALLBACK: u64 = 5_803_568_832;
 const SERVER_PORT: u16 = 8765;
 
 static SERVER_CHILD: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
@@ -52,7 +54,8 @@ fn llama_dir(app: &AppHandle) -> Result<PathBuf> {
 }
 
 fn server_bin(app: &AppHandle) -> Result<PathBuf> {
-    Ok(llama_dir(app)?.join("llama-server"))
+    let name = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
+    Ok(llama_dir(app)?.join(name))
 }
 
 pub fn current_status(_app: &AppHandle) -> AppStatus {
@@ -121,15 +124,27 @@ pub fn start_server(app: &AppHandle) -> Result<()> {
     }
     let lib_dir = llama_dir(app)?;
 
-    let child = std::process::Command::new(&bin)
-        .arg("-m").arg(&mp)
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.arg("-m").arg(&mp)
         .arg("--port").arg(SERVER_PORT.to_string())
         .arg("--host").arg("127.0.0.1")
         .arg("-c").arg("8192")
-        .arg("-ngl").arg("999")
-        .arg("--no-webui")
-        .env("DYLD_LIBRARY_PATH", &lib_dir)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &lib_dir)
+        .arg("--no-webui");
+    #[cfg(target_os = "macos")]
+    {
+        cmd.arg("-ngl").arg("999");
+        cmd.env("DYLD_LIBRARY_PATH", &lib_dir);
+        cmd.env("DYLD_FALLBACK_LIBRARY_PATH", &lib_dir);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{};{}", lib_dir.display(), path));
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = cmd
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
