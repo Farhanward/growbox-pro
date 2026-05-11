@@ -119,6 +119,12 @@ pub fn run() {
             generate_plan,
             list_clients,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Ensure llama-server dies with the app — no orphan process.
+            if let tauri::RunEvent::Exit = event {
+                llm::shutdown_server();
+            }
+        });
 }

@@ -23,7 +23,7 @@ const MODEL_FILENAME: &str = "acegpt-v2-8b-q5km.gguf";
 const MODEL_SIZE_FALLBACK: u64 = 5_800_000_000;
 const SERVER_PORT: u16 = 8765;
 
-static SERVER_PID: Lazy<Mutex<Option<u32>>> = Lazy::new(|| Mutex::new(None));
+static SERVER_CHILD: Lazy<Mutex<Option<std::process::Child>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppStatus {
@@ -60,12 +60,12 @@ fn server_bin(app: &AppHandle) -> Result<PathBuf> {
     Ok(llama_dir(app)?.join("llama-server"))
 }
 
-pub fn current_status(app: &AppHandle) -> AppStatus {
+pub fn current_status(_app: &AppHandle) -> AppStatus {
     let mp = model_path();
-    let pid = SERVER_PID.lock().unwrap().clone();
+    let running = SERVER_CHILD.lock().unwrap().is_some();
     AppStatus {
         model_installed: mp.exists(),
-        server_running: pid.is_some(),
+        server_running: running,
         model_path: mp.to_string_lossy().into_owned(),
     }
 }
@@ -107,7 +107,7 @@ where
 
 pub fn start_server(app: &AppHandle) -> Result<()> {
     {
-        let guard = SERVER_PID.lock().unwrap();
+        let guard = SERVER_CHILD.lock().unwrap();
         if guard.is_some() {
             return Ok(());
         }
@@ -138,10 +138,16 @@ pub fn start_server(app: &AppHandle) -> Result<()> {
         .stderr(Stdio::null())
         .spawn()
         .with_context(|| format!("failed to spawn {}", bin.display()))?;
-    *SERVER_PID.lock().unwrap() = Some(child.id());
-    // Detach — process keeps running until app exits.
-    std::mem::forget(child);
+    *SERVER_CHILD.lock().unwrap() = Some(child);
     Ok(())
+}
+
+/// Called from Tauri's exit hook — terminates llama-server cleanly.
+pub fn shutdown_server() {
+    if let Some(mut child) = SERVER_CHILD.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 pub async fn wait_until_ready(timeout_secs: u64) -> Result<()> {
