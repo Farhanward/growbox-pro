@@ -6,12 +6,13 @@ on:
   workflow_dispatch:
 
 env:
-  LLAMA_VERSION: b4404
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
-    runs-on: macos-14   # Apple Silicon (arm64)
+    runs-on: macos-14
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -27,34 +28,42 @@ jobs:
         run: npm ci || npm install
 
       - name: Fetch llama.cpp prebuilt (Metal, arm64)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p src-tauri/resources/llama
-          # Try latest, then fall back to pinned version.
-          for tag in latest ${LLAMA_VERSION}; do
-            if [ "$tag" = "latest" ]; then
-              api="https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-            else
-              api="https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${tag}"
-            fi
-            url=$(curl -fsSL "$api" \
-              | python3 -c "import json,sys; d=json.load(sys.stdin); \
-                  cands=[a['browser_download_url'] for a in d.get('assets',[]) \
-                  if 'macos-arm64' in a['name'] and a['name'].endswith('.zip')]; \
-                  print(cands[0] if cands else '')") || continue
-            if [ -n "$url" ]; then
-              echo "Downloading $url"
-              curl -fL "$url" -o /tmp/llama.zip
-              unzip -q /tmp/llama.zip -d /tmp/llama-extracted
-              # Flatten — releases ship as build/bin/* — copy server + dylibs.
-              find /tmp/llama-extracted -type f \
-                \( -name 'llama-server' -o -name 'llama-cli' -o -name '*.dylib' -o -name '*.metal' -o -name 'ggml-metal*.bin' \) \
-                -exec cp {} src-tauri/resources/llama/ \;
-              chmod +x src-tauri/resources/llama/llama-server src-tauri/resources/llama/llama-cli || true
-              ls -la src-tauri/resources/llama/
-              break
-            fi
-          done
+
+          # Use gh api (authenticated, no rate-limit) to find the macos-arm64 zip
+          # in the latest llama.cpp release.
+          asset_url=$(gh api repos/ggml-org/llama.cpp/releases/latest \
+            --jq '.assets[].browser_download_url' \
+            | grep -E 'macos-arm64.*\.zip$' | head -1 || true)
+
+          if [ -z "$asset_url" ]; then
+            echo "::warning::No macos-arm64 zip in latest release; available assets:"
+            gh api repos/ggml-org/llama.cpp/releases/latest --jq '.assets[].name' || true
+            # Walk back through last 10 releases to find one with the asset.
+            for tag in $(gh api repos/ggml-org/llama.cpp/releases --jq '.[].tag_name' | head -10); do
+              asset_url=$(gh api "repos/ggml-org/llama.cpp/releases/tags/${tag}" \
+                --jq '.assets[].browser_download_url' \
+                | grep -E 'macos-arm64.*\.zip$' | head -1 || true)
+              [ -n "$asset_url" ] && { echo "Using fallback tag: $tag"; break; }
+            done
+          fi
+
+          test -n "$asset_url"
+          echo "Downloading: $asset_url"
+          curl -fL "$asset_url" -o /tmp/llama.zip
+          unzip -q /tmp/llama.zip -d /tmp/llama-extracted
+
+          find /tmp/llama-extracted -type f \
+            \( -name 'llama-server' -o -name 'llama-cli' -o -name '*.dylib' \
+               -o -name '*.metal' -o -name 'ggml-metal*.bin' \) \
+            -exec cp {} src-tauri/resources/llama/ \;
+
+          chmod +x src-tauri/resources/llama/llama-server src-tauri/resources/llama/llama-cli 2>/dev/null || true
+          ls -la src-tauri/resources/llama/
           test -f src-tauri/resources/llama/llama-server
 
       - name: Build Tauri app (unsigned)

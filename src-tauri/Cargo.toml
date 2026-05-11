@@ -1,6 +1,6 @@
 [package]
 name = "reach-optimizer"
-version = "0.3.0"
+version = "0.3.1"
 description = "ZEED Reach Optimizer - Social media growth planner for Gulf creators"
 authors = ["ZEED"]
 edition = "2021"
