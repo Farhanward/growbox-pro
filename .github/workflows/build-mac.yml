@@ -1,0 +1,35 @@
+name: Build macOS DMG
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build Tauri app (unsigned)
+        env:
+          # Plan B: skip signing. Recipient does right-click → Open once.
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run tauri build -- --target aarch64-apple-darwin
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReachOptimizer-macOS-arm64
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
