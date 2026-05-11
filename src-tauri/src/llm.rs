@@ -210,14 +210,17 @@ pub async fn generate_report(input: &ClientInput, context: &str) -> Result<Strin
             {"role": "user", "content": user}
         ],
         "temperature": 0.65,
-        "max_tokens": 3000,
+        "max_tokens": 2200,
         "stream": false
     });
     let url = format!("http://127.0.0.1:{}/v1/chat/completions", SERVER_PORT);
-    let resp: serde_json::Value = reqwest::Client::new()
+    // CPU build (Windows test): generating ~2000 tokens at 8-15 t/s = 2-4 min.
+    // GPU build (Mac Metal): ~40 t/s = 1 min. Use generous timeout for either.
+    let resp: serde_json::Value = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1800))
+        .build()?
         .post(&url)
         .json(&body)
-        .timeout(std::time::Duration::from_secs(300))
         .send()
         .await?
         .error_for_status()?
