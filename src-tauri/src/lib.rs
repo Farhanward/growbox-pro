@@ -1,4 +1,4 @@
-// ZEED Reach Optimizer — Tauri backend entry point.
+// ZEED Reach Optimizer — Tauri backend.
 mod db;
 mod llm;
 mod scrapers;
@@ -31,24 +31,34 @@ pub struct AppState {
 }
 
 #[tauri::command]
-async fn check_model_status() -> Result<llm::ModelStatus, String> {
-    llm::status().await.map_err(|e| e.to_string())
+fn app_status(app: tauri::AppHandle) -> llm::AppStatus {
+    llm::current_status(&app)
 }
 
+/// One-shot setup: download model (if missing) → start server → wait until ready.
+/// Emits "setup:progress" with stage + percent for UI.
 #[tauri::command]
-async fn download_model(window: tauri::Window) -> Result<(), String> {
-    llm::download_with_progress(move |pct, downloaded, total| {
-        let _ = window.emit(
-            "model:progress",
+async fn setup_app(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
+    let w = window.clone();
+    let _ = w.emit("setup:progress", serde_json::json!({"stage":"model","percent":0.0}));
+    llm::ensure_model(move |pct, dl, total| {
+        let _ = w.emit(
+            "setup:progress",
             serde_json::json!({
-                "percent": pct,
-                "downloaded": downloaded,
-                "total": total,
+                "stage":"model","percent":pct,"downloaded":dl,"total":total
             }),
         );
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| format!("فشل تحميل النموذج: {e}"))?;
+
+    let _ = window.emit("setup:progress", serde_json::json!({"stage":"server","percent":0.0}));
+    llm::start_server(&app).map_err(|e| format!("فشل تشغيل المحرّك: {e}"))?;
+    llm::wait_until_ready(60)
+        .await
+        .map_err(|e| format!("المحرّك لم يستجب: {e}"))?;
+    let _ = window.emit("setup:progress", serde_json::json!({"stage":"ready","percent":100.0}));
+    Ok(())
 }
 
 #[tauri::command]
@@ -61,13 +71,10 @@ async fn generate_plan(
     let id = db::insert_client(pool, &input)
         .await
         .map_err(|e| e.to_string())?;
-
-    // Run scrapers + LLM (stub for now — fills out report)
     let plan_text = llm::generate_plan(&input).await.map_err(|e| e.to_string())?;
     db::save_report(pool, id, &plan_text)
         .await
         .map_err(|e| e.to_string())?;
-
     Ok(ReportSummary {
         id,
         client_name: input.name,
@@ -90,26 +97,25 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .manage(AppState {
-            db: Mutex::new(None),
-        })
+        .manage(AppState { db: Mutex::new(None) })
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match db::init().await {
-                    Ok(pool) => {
-                        let state: State<AppState> = handle.state();
-                        let mut guard = state.db.lock().await;
-                        *guard = Some(pool);
-                    }
-                    Err(e) => eprintln!("DB init failed: {e}"),
+                if let Ok(pool) = db::init().await {
+                    let state: State<AppState> = handle.state();
+                    *state.db.lock().await = Some(pool);
+                }
+                // If model + binary already exist, auto-start server silently.
+                let st = llm::current_status(&handle);
+                if st.model_installed && !st.server_running {
+                    let _ = llm::start_server(&handle);
                 }
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            check_model_status,
-            download_model,
+            app_status,
+            setup_app,
             generate_plan,
             list_clients,
         ])

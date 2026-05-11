@@ -5,31 +5,72 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+env:
+  LLAMA_VERSION: b4404
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: macos-14   # Apple Silicon (arm64)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
 
-      - name: Install dependencies
+      - name: Install JS deps
         run: npm ci || npm install
+
+      - name: Fetch llama.cpp prebuilt (Metal, arm64)
+        run: |
+          set -e
+          mkdir -p src-tauri/resources/llama
+          # Try latest, then fall back to pinned version.
+          for tag in latest ${LLAMA_VERSION}; do
+            if [ "$tag" = "latest" ]; then
+              api="https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+            else
+              api="https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${tag}"
+            fi
+            url=$(curl -fsSL "$api" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); \
+                  cands=[a['browser_download_url'] for a in d.get('assets',[]) \
+                  if 'macos-arm64' in a['name'] and a['name'].endswith('.zip')]; \
+                  print(cands[0] if cands else '')") || continue
+            if [ -n "$url" ]; then
+              echo "Downloading $url"
+              curl -fL "$url" -o /tmp/llama.zip
+              unzip -q /tmp/llama.zip -d /tmp/llama-extracted
+              # Flatten — releases ship as build/bin/* — copy server + dylibs.
+              find /tmp/llama-extracted -type f \
+                \( -name 'llama-server' -o -name 'llama-cli' -o -name '*.dylib' -o -name '*.metal' -o -name 'ggml-metal*.bin' \) \
+                -exec cp {} src-tauri/resources/llama/ \;
+              chmod +x src-tauri/resources/llama/llama-server src-tauri/resources/llama/llama-cli || true
+              ls -la src-tauri/resources/llama/
+              break
+            fi
+          done
+          test -f src-tauri/resources/llama/llama-server
 
       - name: Build Tauri app (unsigned)
         env:
-          # Plan B: skip signing. Recipient does right-click → Open once.
           APPLE_SIGNING_IDENTITY: "-"
         run: npm run tauri build -- --target aarch64-apple-darwin
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ReachOptimizer-macOS-arm64
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+      - name: Attach DMG to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          fail_on_unmatched_files: false
