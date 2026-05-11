@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Reach Optimizer",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "identifier": "com.zeed.reachoptimizer",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -40,7 +40,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/llama/*"],
+    "resources": ["resources/llama/*", "resources/data/*"],
     "macOS": {
       "minimumSystemVersion": "12.0",
       "frameworks": []

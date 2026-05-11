@@ -1,5 +1,6 @@
 // ZEED Reach Optimizer — Tauri backend.
 mod db;
+mod insights;
 mod llm;
 mod scrapers;
 
@@ -24,6 +25,7 @@ pub struct ReportSummary {
     pub client_name: String,
     pub generated_at: String,
     pub status: String,
+    pub content: String,
 }
 
 pub struct AppState {
@@ -35,8 +37,6 @@ fn app_status(app: tauri::AppHandle) -> llm::AppStatus {
     llm::current_status(&app)
 }
 
-/// One-shot setup: download model (if missing) → start server → wait until ready.
-/// Emits "setup:progress" with stage + percent for UI.
 #[tauri::command]
 async fn setup_app(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
     let w = window.clone();
@@ -44,9 +44,7 @@ async fn setup_app(app: tauri::AppHandle, window: tauri::Window) -> Result<(), S
     llm::ensure_model(move |pct, dl, total| {
         let _ = w.emit(
             "setup:progress",
-            serde_json::json!({
-                "stage":"model","percent":pct,"downloaded":dl,"total":total
-            }),
+            serde_json::json!({"stage":"model","percent":pct,"downloaded":dl,"total":total}),
         );
     })
     .await
@@ -61,25 +59,46 @@ async fn setup_app(app: tauri::AppHandle, window: tauri::Window) -> Result<(), S
     Ok(())
 }
 
+/// Full pipeline: scrape → competitors → trends → LLM → save.
 #[tauri::command]
-async fn generate_plan(
+async fn generate_report(
+    app: tauri::AppHandle,
+    window: tauri::Window,
     state: State<'_, AppState>,
     input: ClientInput,
 ) -> Result<ReportSummary, String> {
+    let w = window.clone();
+    let emit = move |stage: &str, msg: &str| {
+        let _ = w.emit(
+            "report:progress",
+            serde_json::json!({"stage": stage, "message": msg}),
+        );
+    };
+
+    let bundle = insights::gather(&app, &input, emit.clone())
+        .await
+        .map_err(|e| format!("فشل جمع البيانات: {e}"))?;
+    let context = insights::build_context_block(&bundle, &input);
+
+    let content = llm::generate_report(&input, &context)
+        .await
+        .map_err(|e| format!("فشل توليد التقرير: {e}"))?;
+
     let pool_guard = state.db.lock().await;
     let pool = pool_guard.as_ref().ok_or("DB not initialized")?;
     let id = db::insert_client(pool, &input)
         .await
         .map_err(|e| e.to_string())?;
-    let plan_text = llm::generate_plan(&input).await.map_err(|e| e.to_string())?;
-    db::save_report(pool, id, &plan_text)
+    db::save_report(pool, id, &content)
         .await
         .map_err(|e| e.to_string())?;
+
     Ok(ReportSummary {
         id,
         client_name: input.name,
         generated_at: chrono::Utc::now().to_rfc3339(),
         status: "ready".into(),
+        content,
     })
 }
 
@@ -88,6 +107,13 @@ async fn list_clients(state: State<'_, AppState>) -> Result<Vec<ReportSummary>, 
     let pool_guard = state.db.lock().await;
     let pool = pool_guard.as_ref().ok_or("DB not initialized")?;
     db::list_clients(pool).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn load_report(state: State<'_, AppState>, id: i64) -> Result<String, String> {
+    let pool_guard = state.db.lock().await;
+    let pool = pool_guard.as_ref().ok_or("DB not initialized")?;
+    db::load_latest_report(pool, id).await.map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -105,7 +131,6 @@ pub fn run() {
                     let state: State<AppState> = handle.state();
                     *state.db.lock().await = Some(pool);
                 }
-                // If model + binary already exist, auto-start server silently.
                 let st = llm::current_status(&handle);
                 if st.model_installed && !st.server_running {
                     let _ = llm::start_server(&handle);
@@ -116,13 +141,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             setup_app,
-            generate_plan,
+            generate_report,
             list_clients,
+            load_report,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
-            // Ensure llama-server dies with the app — no orphan process.
             if let tauri::RunEvent::Exit = event {
                 llm::shutdown_server();
             }

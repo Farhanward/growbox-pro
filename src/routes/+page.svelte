@@ -2,9 +2,10 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import { marked } from "marked";
 
   type Status = { model_installed: boolean; server_running: boolean; model_path: string };
-  type Report = { id: number; client_name: string; generated_at: string; status: string };
+  type Report = { id: number; client_name: string; generated_at: string; status: string; content: string };
 
   const COUNTRIES = [
     { code: "SA", label: "السعودية" },
@@ -34,9 +35,12 @@
   let planDays = $state(30);
 
   let working = $state(false);
+  let progressMsg = $state("");
   let lastReport = $state<Report | null>(null);
   let history = $state<Report[]>([]);
   let formError = $state("");
+  let viewingId = $state<number | null>(null);
+  let viewingContent = $state("");
 
   onMount(async () => {
     await refreshStatus();
@@ -53,6 +57,9 @@
                 : stage === "ready" ? "جاهز" : "";
       },
     );
+    await listen<{ stage: string; message: string }>("report:progress", (e) => {
+      progressMsg = e.payload.message;
+    });
   });
 
   async function refreshStatus() {
@@ -61,7 +68,6 @@
   async function refreshHistory() {
     try { history = await invoke<Report[]>("list_clients"); } catch {}
   }
-
   async function runSetup() {
     setupRunning = true;
     setupError = "";
@@ -87,8 +93,9 @@
     if (!name.trim()) { formError = "أدخل اسم العميل."; return; }
     working = true;
     formError = "";
+    progressMsg = "تجهيز…";
     try {
-      lastReport = await invoke<Report>("generate_plan", {
+      lastReport = await invoke<Report>("generate_report", {
         input: {
           name: name.trim(),
           tiktok: tiktok.trim() || null,
@@ -97,46 +104,65 @@
           niche, countries, plan_days: planDays,
         },
       });
+      viewingId = lastReport.id;
+      viewingContent = lastReport.content;
       await refreshHistory();
     } catch (e) {
-      formError = `تعذّر التوليد: ${e}`;
+      formError = `${e}`;
     } finally {
       working = false;
+      progressMsg = "";
     }
   }
 
+  async function viewReport(id: number) {
+    try {
+      const content = await invoke<string>("load_report", { id });
+      viewingId = id;
+      viewingContent = content;
+    } catch (e) {
+      formError = `${e}`;
+    }
+  }
+
+  function downloadMarkdown() {
+    if (!viewingContent) return;
+    const blob = new Blob([viewingContent], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `report-${viewingId}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   let isReady = $derived(status?.model_installed && status?.server_running);
+  let rendered = $derived(viewingContent ? marked.parse(viewingContent, { breaks: true }) : "");
 </script>
 
 <div class="min-h-screen px-6 py-8 max-w-5xl mx-auto">
   <header class="flex items-center justify-between mb-8">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Reach Optimizer</h1>
-      <p class="text-sm text-zinc-400 mt-1">خطة انتشار خليجية — بدون تسجيل دخول للحسابات</p>
+      <p class="text-sm text-zinc-400 mt-1">تحليل عميق للحسابات الخليجية — بدون تسجيل دخول</p>
     </div>
     {#if status}
       <span class="pill">
         <span class="w-2 h-2 rounded-full {isReady ? 'bg-emerald-400' : 'bg-amber-400'}"></span>
-        {isReady ? "جاهز للاستخدام" : "يحتاج تجهيز"}
+        {isReady ? "جاهز" : "يحتاج تجهيز"}
       </span>
     {/if}
   </header>
 
   {#if !isReady}
-    <!-- شاشة التجهيز: زر واحد فقط -->
     <div class="card text-center py-12">
       <h2 class="text-xl font-semibold mb-3">مرحباً بك 👋</h2>
       <p class="text-zinc-400 mb-8 max-w-md mx-auto">
-        قبل الاستخدام، نحتاج تحميل نموذج الذكاء الاصطناعي مرة واحدة فقط (~5.8 جيجا).
-        اضغط الزر وانتظر — كل شيء يصير تلقائياً.
+        قبل الاستخدام، نحتاج تحميل نموذج الذكاء الاصطناعي مرة واحدة (~5.8 جيجا). اضغط الزر وانتظر.
       </p>
-
       {#if !setupRunning && stage !== "ready"}
-        <button class="btn-primary text-lg px-8 py-3" onclick={runSetup}>
-          ابدأ التجهيز
-        </button>
+        <button class="btn-primary text-lg px-8 py-3" onclick={runSetup}>ابدأ التجهيز</button>
       {/if}
-
       {#if setupRunning}
         <div class="max-w-md mx-auto">
           <p class="text-emerald-400 font-medium mb-3">{stageMsg}</p>
@@ -148,20 +174,18 @@
           </p>
         </div>
       {/if}
-
       {#if setupError}
         <p class="text-red-400 text-sm mt-6 max-w-md mx-auto">{setupError}</p>
         <button class="btn-ghost mt-3" onclick={runSetup}>إعادة المحاولة</button>
       {/if}
     </div>
   {:else}
-    <!-- شاشة الاستخدام العادية -->
     <div class="card mb-6">
       <h2 class="font-semibold mb-4">حساب العميل</h2>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div class="md:col-span-2">
           <label class="field-label" for="cn">اسم العميل</label>
-          <input id="cn" class="field-input" bind:value={name} placeholder="مثلاً: فاطمة لينس" />
+          <input id="cn" class="field-input" bind:value={name} placeholder="فاطمة لينس" />
         </div>
         <div>
           <label class="field-label" for="tt">TikTok</label>
@@ -204,19 +228,27 @@
       </div>
       <div class="mt-6 flex items-center gap-3">
         <button class="btn-primary" disabled={working} onclick={generate}>
-          {working ? "جارٍ التوليد…" : "توليد التقرير"}
+          {working ? "جارٍ التحليل…" : "تحليل وتوليد التقرير"}
         </button>
+        {#if working && progressMsg}
+          <span class="text-sm text-zinc-400">{progressMsg}</span>
+        {/if}
         {#if formError}<span class="text-sm text-red-400">{formError}</span>{/if}
       </div>
     </div>
 
-    {#if lastReport}
+    {#if viewingContent}
       <div class="card mb-6">
-        <h2 class="font-semibold mb-2">آخر تقرير</h2>
-        <p class="text-sm text-zinc-400">
-          #{lastReport.id} — {lastReport.client_name} —
-          {new Date(lastReport.generated_at).toLocaleString("ar")}
-        </p>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold">التقرير #{viewingId}</h2>
+          <div class="flex gap-2">
+            <button class="btn-ghost text-sm" onclick={downloadMarkdown}>تنزيل Markdown</button>
+            <button class="btn-ghost text-sm" onclick={() => { viewingContent = ""; viewingId = null; }}>إغلاق</button>
+          </div>
+        </div>
+        <div class="prose-report">
+          {@html rendered}
+        </div>
       </div>
     {/if}
 
@@ -228,7 +260,9 @@
         <ul class="divide-y divide-zinc-800">
           {#each history as h}
             <li class="py-3 flex items-center justify-between">
-              <span>{h.client_name}</span>
+              <button class="text-right hover:text-emerald-400 transition" onclick={() => viewReport(h.id)}>
+                {h.client_name}
+              </button>
               <span class="text-xs text-zinc-500">
                 {new Date(h.generated_at).toLocaleDateString("ar")}
               </span>
@@ -239,3 +273,35 @@
     </div>
   {/if}
 </div>
+
+<style>
+  :global(.prose-report) {
+    color: #e4e4e7;
+    line-height: 1.8;
+  }
+  :global(.prose-report h1),
+  :global(.prose-report h2),
+  :global(.prose-report h3) {
+    color: #34d399;
+    font-weight: 700;
+    margin-top: 1.2em;
+    margin-bottom: 0.5em;
+  }
+  :global(.prose-report h1) { font-size: 1.5rem; }
+  :global(.prose-report h2) { font-size: 1.25rem; }
+  :global(.prose-report h3) { font-size: 1.1rem; }
+  :global(.prose-report ul),
+  :global(.prose-report ol) {
+    padding-right: 1.5em;
+    margin: 0.5em 0;
+  }
+  :global(.prose-report li) { margin: 0.25em 0; }
+  :global(.prose-report p) { margin: 0.5em 0; }
+  :global(.prose-report strong) { color: #fbbf24; }
+  :global(.prose-report code) {
+    background: #18181b;
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+</style>

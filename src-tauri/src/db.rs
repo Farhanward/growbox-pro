@@ -28,9 +28,7 @@ pub async fn init() -> Result<SqlitePool> {
             plan_days INTEGER NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )"#,
-    )
-    .execute(&pool)
-    .await?;
+    ).execute(&pool).await?;
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,33 +37,22 @@ pub async fn init() -> Result<SqlitePool> {
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY(client_id) REFERENCES clients(id)
         )"#,
-    )
-    .execute(&pool)
-    .await?;
+    ).execute(&pool).await?;
     Ok(pool)
 }
 
 pub async fn insert_client(pool: &SqlitePool, c: &ClientInput) -> Result<i64> {
     let countries = c.countries.join(",");
     let row = sqlx::query("INSERT INTO clients (name, tiktok, instagram, snapchat, niche, countries, plan_days) VALUES (?,?,?,?,?,?,?)")
-        .bind(&c.name)
-        .bind(&c.tiktok)
-        .bind(&c.instagram)
-        .bind(&c.snapchat)
-        .bind(&c.niche)
-        .bind(&countries)
-        .bind(c.plan_days as i64)
-        .execute(pool)
-        .await?;
+        .bind(&c.name).bind(&c.tiktok).bind(&c.instagram).bind(&c.snapchat)
+        .bind(&c.niche).bind(&countries).bind(c.plan_days as i64)
+        .execute(pool).await?;
     Ok(row.last_insert_rowid())
 }
 
 pub async fn save_report(pool: &SqlitePool, client_id: i64, content: &str) -> Result<()> {
     sqlx::query("INSERT INTO reports (client_id, content) VALUES (?,?)")
-        .bind(client_id)
-        .bind(content)
-        .execute(pool)
-        .await?;
+        .bind(client_id).bind(content).execute(pool).await?;
     Ok(())
 }
 
@@ -75,13 +62,18 @@ pub async fn list_clients(pool: &SqlitePool) -> Result<Vec<ReportSummary>> {
     )
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, name, created_at)| ReportSummary {
-            id,
-            client_name: name,
-            generated_at: created_at,
-            status: "ready".into(),
-        })
-        .collect())
+    Ok(rows.into_iter().map(|(id, name, created_at)| ReportSummary {
+        id, client_name: name, generated_at: created_at,
+        status: "ready".into(), content: String::new(),
+    }).collect())
+}
+
+pub async fn load_latest_report(pool: &SqlitePool, client_id: i64) -> Result<String> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT content FROM reports WHERE client_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(client_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0).unwrap_or_default())
 }

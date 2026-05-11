@@ -1,18 +1,14 @@
-// LLM lifecycle:
-// 1. setup() — runs once. Downloads model GGUF if missing, then spawns the
-//    bundled llama-server process pointing at it.
-// 2. generate_plan() — sends a chat-completion request to the local server.
+// LLM lifecycle + report generation.
 //
-// All paths are resolved relative to the Tauri AppHandle so the same code
-// works in `cargo run` (resources next to crate) and in the .app bundle
-// (resources under Contents/Resources/).
+// generate_report() now takes a pre-built context string (from insights::gather)
+// instead of building one from scratch, so the model sees real numbers.
 
 use crate::ClientInput;
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
@@ -47,7 +43,6 @@ fn model_path() -> PathBuf {
 }
 
 fn llama_dir(app: &AppHandle) -> Result<PathBuf> {
-    // In dev: src-tauri/resources/llama. In bundle: Contents/Resources/resources/llama.
     let p = app
         .path()
         .resource_dir()
@@ -76,12 +71,13 @@ where
 {
     let target = model_path();
     if target.exists() {
-        on_progress(100.0, target.metadata()?.len(), target.metadata()?.len());
+        let sz = target.metadata()?.len();
+        on_progress(100.0, sz, sz);
         return Ok(());
     }
     let tmp = target.with_extension("part");
     let client = reqwest::Client::builder()
-        .user_agent("ReachOptimizer/0.2")
+        .user_agent("ReachOptimizer/0.3")
         .build()?;
     let resp = client.get(MODEL_URL).send().await?.error_for_status()?;
     let total = resp.content_length().unwrap_or(MODEL_SIZE_FALLBACK);
@@ -129,8 +125,8 @@ pub fn start_server(app: &AppHandle) -> Result<()> {
         .arg("-m").arg(&mp)
         .arg("--port").arg(SERVER_PORT.to_string())
         .arg("--host").arg("127.0.0.1")
-        .arg("-c").arg("4096")
-        .arg("-ngl").arg("999")           // offload all layers to Metal
+        .arg("-c").arg("8192")
+        .arg("-ngl").arg("999")
         .arg("--no-webui")
         .env("DYLD_LIBRARY_PATH", &lib_dir)
         .env("DYLD_FALLBACK_LIBRARY_PATH", &lib_dir)
@@ -142,7 +138,6 @@ pub fn start_server(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-/// Called from Tauri's exit hook — terminates llama-server cleanly.
 pub fn shutdown_server() {
     if let Some(mut child) = SERVER_CHILD.lock().unwrap().take() {
         let _ = child.kill();
@@ -165,21 +160,49 @@ pub async fn wait_until_ready(timeout_secs: u64) -> Result<()> {
     Err(anyhow!("server not ready in {}s", timeout_secs))
 }
 
-pub async fn generate_plan(input: &ClientInput) -> Result<String> {
-    let prompt = build_dialect_prompt(input);
+pub async fn generate_report(input: &ClientInput, context: &str) -> Result<String> {
+    let dialect_hint = if input.countries.iter().any(|c| c == "KW") {
+        "اكتب التقرير بلهجة كويتية ودودة (شلون، يبيلك، عاد، حدّه، قاعد)."
+    } else if input.countries.iter().any(|c| c == "SA") {
+        "اكتب التقرير بلهجة سعودية مفهومة (كذا، تبي، ولا يهمك، أبد)."
+    } else {
+        "اكتب التقرير بعربي خليجي مفهوم لكل دول الخليج."
+    };
+    let system = format!(
+        "أنت خبير تسويق رقمي خليجي متخصص في نمو حسابات السوشيال ميديا. \
+         تعتمد فقط على البيانات الفعلية المُعطاة لك ولا تختلق أرقاماً. {}",
+        dialect_hint
+    );
+    let user = format!(
+        "بناءً على البيانات التالية:\n\n{}\n\n\
+         اكتب تقرير انتشار شامل بصيغة Markdown يحتوي على:\n\
+         1. **ملخص تنفيذي**: ٣ نقاط تصف وضع الحساب مقارنة بالمنافسين.\n\
+         2. **تشخيص البايو والـ SEO**: كلمات مقترحة لتظهر في البحث الداخلي.\n\
+         3. **هاشتاقات لكل منشور** (٥ كبيرة + ١٠ متوسطة + ٥ نيتش).\n\
+         4. **أوقات النشر الذهبية** بتفصيل لكل دولة مستهدفة.\n\
+         5. **١٤ فكرة محتوى** عملية للأسابيع القادمة، كل فكرة بسطر واحد.\n\
+         6. **خطة أسبوعية مفصّلة** للأيام السبعة الأولى: متى ينشر وأي محتوى وأي هاشتاقات.\n\
+         7. **تحليل المنافسين**: ماذا يفعلون وماذا تستفيد منه.\n\
+         8. **مؤشرات النجاح**: ما يجب قياسه بعد ٧ و١٤ و٣٠ يوم.\n\
+         9. **توصيات خاصة بالخوارزمية**: ٥ نصائح تقنية لزيادة الـ Reach.\n\n\
+         استخدم عناوين Markdown (##) وقوائم نقطية. لا تستخدم أرقام مختلقة.",
+        context
+    );
+
     let body = serde_json::json!({
         "messages": [
-            {"role": "system", "content": "أنت مساعد تسويق رقمي للمحتوى الخليجي."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": system},
+            {"role": "user", "content": user}
         ],
-        "temperature": 0.7,
-        "max_tokens": 1500,
+        "temperature": 0.65,
+        "max_tokens": 3000,
         "stream": false
     });
     let url = format!("http://127.0.0.1:{}/v1/chat/completions", SERVER_PORT);
     let resp: serde_json::Value = reqwest::Client::new()
         .post(&url)
         .json(&body)
+        .timeout(std::time::Duration::from_secs(300))
         .send()
         .await?
         .error_for_status()?
@@ -187,24 +210,7 @@ pub async fn generate_plan(input: &ClientInput) -> Result<String> {
         .await?;
     let text = resp["choices"][0]["message"]["content"]
         .as_str()
-        .unwrap_or("(لا توجد إجابة)")
+        .unwrap_or("(لا توجد إجابة من النموذج)")
         .to_string();
     Ok(text)
 }
-
-fn build_dialect_prompt(input: &ClientInput) -> String {
-    let dialect_hint = if input.countries.iter().any(|c| c == "KW") {
-        "اكتب بلهجة كويتية ودودة واستخدم: شلون، يبيلك، عاد، حدّه، قاعد."
-    } else if input.countries.iter().any(|c| c == "SA") {
-        "اكتب بلهجة سعودية مفهومة (حجازية/نجدية حسب السياق): كذا، تبي، ولا يهمك، أبد."
-    } else {
-        "اكتب بعربي خليجي مفهوم لكل دول الخليج."
-    };
-    format!(
-        "{}\n\nاقترح خطة انتشار لمدة {} يوم لحساب '{}' في مجال {} موجّه لجمهور {:?}.\n\nأخرج الخطة بصيغة Markdown تتضمن:\n1. ٥ هاشتاقات حقيقية لكل منصة (TikTok, Instagram).\n2. أوقات النشر الذهبية بتوقيت الخليج.\n3. ١٠ أفكار محتوى عملية للشهر.\n4. كلمات بايو SEO مقترحة.\n5. ٣ مؤشرات نجاح يجب متابعتها.",
-        dialect_hint, input.plan_days, input.name, input.niche, input.countries
-    )
-}
-
-#[allow(dead_code)]
-fn _path_exists(p: &Path) -> bool { p.exists() }

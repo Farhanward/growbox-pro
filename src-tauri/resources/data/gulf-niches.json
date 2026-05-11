@@ -1,0 +1,147 @@
+{
+  "تصوير": {
+    "trending_hashtags": [
+      "#تصوير", "#تصوير_احترافي", "#مصورين_السعودية", "#مصورين_الكويت",
+      "#تصوير_بورتريه", "#تصوير_منتجات", "#تصوير_اعراس", "#فوتوغرافي",
+      "#photography_lovers_arabia", "#riyadh_photography", "#jeddah_photography",
+      "#kuwait_photography", "#dubai_photography", "#تصوير_طبيعه", "#فلتر",
+      "#لايتروم", "#فوتوشوب", "#كاميرا", "#sonyalpha_arabia", "#canon_arabia"
+    ],
+    "competitors": {
+      "SA": ["humansofsa", "saudiphotographers", "rzn_studio"],
+      "KW": ["kuwaitphotographers", "q8_lens", "boushahri_studio"],
+      "AE": ["dubaiphotographer", "uae_lens", "frame_dubai"],
+      "QA": ["qatar_photography", "doha_lens"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["١٢:٠٠ ظهراً", "٧:٠٠ مساءً", "١٠:٠٠ مساءً"],
+      "weekend": ["١١:٠٠ صباحاً", "٤:٠٠ عصراً", "٩:٠٠ مساءً"]
+    }
+  },
+  "موضة": {
+    "trending_hashtags": [
+      "#موضة", "#ستايل", "#فاشن", "#أزياء", "#موضة_نسائية", "#اوت_فت",
+      "#fashion_kw", "#fashion_sa", "#fashion_uae", "#خليجيات_شيك",
+      "#عبايات", "#فساتين", "#ميك_اب", "#لوك_اليوم", "#ootd_kuwait",
+      "#riyadh_fashion", "#dubai_style", "#فاشن_بلوقر", "#ستايل_خليجي", "#تنسيق"
+    ],
+    "competitors": {
+      "SA": ["saudistyle", "riyadhfashion", "ksa_ootd"],
+      "KW": ["q8fashion", "kuwait_style", "kw_ootd"],
+      "AE": ["dubaifashion", "uae_style"],
+      "QA": ["doha_fashion"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["٢:٠٠ ظهراً", "٨:٠٠ مساءً", "١١:٠٠ مساءً"],
+      "weekend": ["١:٠٠ ظهراً", "٥:٠٠ عصراً", "١٠:٠٠ مساءً"]
+    }
+  },
+  "طعام": {
+    "trending_hashtags": [
+      "#طعام", "#اكلات", "#وصفات", "#مطاعم_الرياض", "#مطاعم_الكويت",
+      "#مطاعم_دبي", "#foodie_kw", "#foodie_sa", "#riyadhfood", "#kuwaitfood",
+      "#dubaifood", "#حلويات", "#قهوة", "#كافيهات", "#طبخات_خليجية",
+      "#مطاعم_جده", "#أكل_بيتي", "#وصفات_رمضان", "#فطور", "#عشاء"
+    ],
+    "competitors": {
+      "SA": ["saudifoodies", "riyadhfoodguide", "jeddah_eats"],
+      "KW": ["kuwaitfoodies", "q8eats", "kw_foodguide"],
+      "AE": ["dubaifoodie", "uae_eats"],
+      "QA": ["doha_food"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["١:٠٠ ظهراً", "٧:٣٠ مساءً", "١٠:٠٠ مساءً"],
+      "weekend": ["١٢:٠٠ ظهراً", "٤:٠٠ عصراً", "٩:٠٠ مساءً"]
+    }
+  },
+  "سفر": {
+    "trending_hashtags": [
+      "#سفر", "#سياحة", "#travel_kw", "#travel_sa", "#رحلات", "#وجهات_سياحية",
+      "#travelblogger_arabia", "#مسافر", "#explorearabia", "#dubai_travel",
+      "#saudi_travel", "#kuwait_travel", "#نيوم", "#العلا", "#الرياض_سياحة",
+      "#abudhabi_travel", "#مغامرة", "#فنادق", "#رحلة", "#travelphotography"
+    ],
+    "competitors": {
+      "SA": ["saudiexplorer", "visitsaudi", "alula_tourism"],
+      "KW": ["kuwait_traveler", "q8_explorer"],
+      "AE": ["visitdubai", "uae_traveler"],
+      "QA": ["visitqatar"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["١٠:٠٠ صباحاً", "٦:٠٠ مساءً", "١٠:٠٠ مساءً"],
+      "weekend": ["٩:٠٠ صباحاً", "٢:٠٠ ظهراً", "٨:٠٠ مساءً"]
+    }
+  },
+  "تجميل": {
+    "trending_hashtags": [
+      "#تجميل", "#ميك_اب", "#مكياج", "#beauty_kw", "#beauty_sa",
+      "#صالونات_الرياض", "#صالونات_الكويت", "#عناية_بشرة", "#سكين_كير",
+      "#hair_kw", "#hair_sa", "#مكياج_خليجي", "#عطورات", "#parfum",
+      "#مناكير", "#beauty_arabia", "#smokey_eyes", "#كحل", "#احمر_شفايف", "#كونتور"
+    ],
+    "competitors": {
+      "SA": ["saudibeauty", "riyadh_makeup", "ksa_glam"],
+      "KW": ["kuwait_makeup", "q8_beauty", "kw_glam"],
+      "AE": ["dubai_makeup"],
+      "QA": ["doha_beauty"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["٣:٠٠ عصراً", "٨:٠٠ مساءً", "١١:٠٠ مساءً"],
+      "weekend": ["٢:٠٠ ظهراً", "٦:٠٠ مساءً", "١٠:٠٠ مساءً"]
+    }
+  },
+  "رياضة": {
+    "trending_hashtags": [
+      "#رياضة", "#لياقة", "#fitness_kw", "#fitness_sa", "#جيم", "#كروسفت",
+      "#تنحيف", "#workout_arabia", "#كرة_قدم", "#الهلال", "#النصر",
+      "#ksa_sports", "#kw_sports", "#تمارين_بيت", "#مدرب_شخصي", "#تغذية",
+      "#protein", "#yoga_arabia", "#padel_kw", "#running_riyadh"
+    ],
+    "competitors": {
+      "SA": ["ksa_fitness", "riyadh_gym", "saudi_athlete"],
+      "KW": ["kw_fitness", "q8_gym"],
+      "AE": ["uae_fitness"],
+      "QA": ["doha_fitness"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["٦:٠٠ صباحاً", "٥:٠٠ عصراً", "٩:٠٠ مساءً"],
+      "weekend": ["٧:٠٠ صباحاً", "٣:٠٠ عصراً", "٨:٠٠ مساءً"]
+    }
+  },
+  "تعليم": {
+    "trending_hashtags": [
+      "#تعليم", "#مذاكرة", "#طلاب", "#جامعات", "#مهارات", "#دورات",
+      "#قدرات", "#تحصيلي", "#study_arabia", "#تعليم_عن_بعد", "#لغة_انجليزية",
+      "#برمجة", "#تطوير_ذاتي", "#كتب", "#قراءة", "#معلم", "#أكاديمي",
+      "#study_tips", "#تخرج", "#منح_دراسية"
+    ],
+    "competitors": {
+      "SA": ["saudistudents", "ksa_education"],
+      "KW": ["kw_students", "q8_education"],
+      "AE": ["uae_students"],
+      "QA": ["doha_students"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["٤:٠٠ عصراً", "٨:٠٠ مساءً", "١٠:٠٠ مساءً"],
+      "weekend": ["١٢:٠٠ ظهراً", "٧:٠٠ مساءً", "٩:٠٠ مساءً"]
+    }
+  },
+  "ألعاب": {
+    "trending_hashtags": [
+      "#ألعاب", "#قيمنق", "#gaming_arabia", "#كول_اوف_ديوتي", "#فورتنايت",
+      "#فالورنت", "#ببجي", "#فيفا", "#ps5", "#xbox", "#esports_ksa",
+      "#esports_kw", "#مونتاج_العاب", "#streamer", "#twitch_arabia", "#يوتيوبر",
+      "#قيمر_عربي", "#لاعبين_عرب", "#league_of_legends", "#tournament"
+    ],
+    "competitors": {
+      "SA": ["ksa_gamers", "saudi_esports"],
+      "KW": ["q8_gamers", "kw_esports"],
+      "AE": ["uae_gamers"],
+      "QA": ["doha_gamers"]
+    },
+    "best_post_times_gulf": {
+      "weekday": ["٨:٠٠ مساءً", "١١:٠٠ مساءً", "١:٠٠ صباحاً"],
+      "weekend": ["٤:٠٠ عصراً", "١٠:٠٠ مساءً", "٢:٠٠ صباحاً"]
+    }
+  }
+}
