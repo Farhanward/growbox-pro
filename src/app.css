@@ -2,37 +2,187 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Apple HIG tokens — light + dark auto-flip via prefers-color-scheme */
 :root {
-  font-family: "SF Arabic", "IBM Plex Sans Arabic", "Segoe UI", system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
+  --bg:           #f5f5f7;
+  --surface:     #ffffff;
+  --surface-2:   #e5e5ea;
+  --text:         #1d1d1f;
+  --text-2:       #6e6e73;
+  --hairline:     rgba(60, 60, 67, 0.29);
+  --primary:      #0a84ff;
+  --success:      #30d158;
+  --warning:      #ff9f0a;
+  --danger:       #ff453a;
+  --shadow-1:     0 1px 2px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.08);
+  --blur-bg:      rgba(255, 255, 255, 0.72);
+  --ease-spring:  cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:         #000000;
+    --surface:    #1c1c1e;
+    --surface-2:  #2c2c2e;
+    --text:       #f5f5f7;
+    --text-2:     #98989d;
+    --hairline:   rgba(84, 84, 88, 0.65);
+    --shadow-1:   0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.3);
+    --blur-bg:    rgba(28, 28, 30, 0.72);
+  }
 }
 
 html, body {
   height: 100%;
-  background: #0f0f12;
-  color: #f3f4f6;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+               "SF Arabic", "IBM Plex Sans Arabic", "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.47;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
+h1, h2, h3 { letter-spacing: -0.02em; font-weight: 600; }
+
 @layer components {
-  .field-label { @apply text-sm text-zinc-400 mb-1 block; }
+  .surface {
+    background: var(--surface);
+    border-radius: 22px;
+    box-shadow: var(--shadow-1);
+  }
+  .vibrancy {
+    background: var(--blur-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 0.5px solid var(--hairline);
+  }
+  .hairline { border-color: var(--hairline) !important; }
+  .divider { border-top: 0.5px solid var(--hairline); }
+
+  .field-label {
+    display: block;
+    font-size: 13px;
+    color: var(--text-2);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
   .field-input {
-    @apply w-full bg-zinc-800/70 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-100
-           focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-500/60
-           transition placeholder:text-zinc-500;
+    width: 100%;
+    background: var(--surface-2);
+    border: 0.5px solid transparent;
+    color: var(--text);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 15px;
+    transition: all 200ms var(--ease-spring);
+    min-height: 44px;
   }
+  .field-input::placeholder { color: var(--text-2); opacity: 0.6; }
+  .field-input:focus {
+    outline: none;
+    background: var(--surface);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.16);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 22px;
+    border-radius: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    transition: transform 200ms var(--ease-spring), background 180ms;
+    cursor: pointer;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
   .btn-primary {
-    @apply bg-emerald-500 hover:bg-emerald-400 text-black font-semibold
-           rounded-lg px-5 py-2.5 transition disabled:opacity-50 disabled:cursor-not-allowed;
+    background: var(--primary);
+    color: #fff;
   }
+  .btn-primary:hover:not(:disabled) { background: #0070dc; }
+
   .btn-ghost {
-    @apply bg-zinc-800/70 hover:bg-zinc-700 text-zinc-100
-           rounded-lg px-5 py-2.5 transition;
+    background: var(--surface-2);
+    color: var(--text);
   }
-  .card {
-    @apply bg-zinc-900/70 border border-zinc-800 rounded-2xl p-6 backdrop-blur;
-  }
+  .btn-ghost:hover:not(:disabled) { background: var(--hairline); }
+
   .pill {
-    @apply inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs
-           bg-zinc-800/70 border border-zinc-700 text-zinc-300;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 0.5px solid var(--hairline);
+    font-size: 12px;
+    color: var(--text-2);
   }
+
+  .chip {
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 14px;
+    border: 0.5px solid transparent;
+    transition: all 180ms var(--ease-spring);
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--hairline); }
+  .chip-on {
+    background: rgba(10,132,255,0.16);
+    color: var(--primary);
+    border-color: rgba(10,132,255,0.4);
+  }
+
+  .progress-track {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width 300ms var(--ease-spring);
+  }
+}
+
+/* Report renderer */
+:global(.report-body) {
+  color: var(--text);
+  line-height: 1.8;
+}
+:global(.report-body h1),
+:global(.report-body h2),
+:global(.report-body h3) {
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 1.4em;
+  margin-bottom: 0.5em;
+}
+:global(.report-body h1) { font-size: 1.6rem; }
+:global(.report-body h2) { font-size: 1.3rem; }
+:global(.report-body h3) { font-size: 1.1rem; color: var(--primary); }
+:global(.report-body ul), :global(.report-body ol) {
+  padding-right: 1.5em;
+  margin: 0.5em 0;
+}
+:global(.report-body li) { margin: 0.3em 0; }
+:global(.report-body strong) { color: var(--text); font-weight: 600; }
+:global(.report-body code) {
+  background: var(--surface-2);
+  padding: 0.1em 0.4em;
+  border-radius: 6px;
+  font-size: 0.9em;
 }
