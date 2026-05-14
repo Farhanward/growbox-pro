@@ -78,13 +78,18 @@ jobs:
 
       # ── Binary architecture verification ─────────────────────────────────────
       - name: "TEST 2: Verify binary architectures (aarch64)"
+        if: always()
         run: |
           APP=$(find /Applications -name "GrowBox Pro.app" -maxdepth 1 | head -1)
-          MACOS_BIN="$APP/Contents/MacOS/GrowBox Pro"
+          # Discover actual executable name from Info.plist to avoid hardcoded spaces
+          EXEC_NAME=$(plutil -p "$APP/Contents/Info.plist" | grep CFBundleExecutable | awk -F'"' '{print $4}')
+          MACOS_BIN="$APP/Contents/MacOS/$EXEC_NAME"
+          echo "CFBundleExecutable : $EXEC_NAME"
+          echo "Binary path        : $MACOS_BIN"
+          echo ""
           echo "--- Main app binary ---"
           file "$MACOS_BIN"
           echo ""
-          # Must be arm64
           file "$MACOS_BIN" | grep -q "arm64" && echo "✅ arm64 confirmed" || (echo "❌ Wrong arch!" && exit 1)
           echo ""
           echo "--- llama-server ---"
@@ -98,6 +103,7 @@ jobs:
 
       # ── Bundled sidecar smoke tests ───────────────────────────────────────────
       - name: "TEST 3: Smoke-test bundled sidecars"
+        if: always()
         run: |
           APP=$(find /Applications -name "GrowBox Pro.app" -maxdepth 1 | head -1)
           RES="$APP/Contents/Resources/resources"
@@ -147,6 +153,7 @@ jobs:
 
       # ── Dynamic library linkage test ──────────────────────────────────────────
       - name: "TEST 4: Verify dylib linkage (no broken deps)"
+        if: always()
         run: |
           APP=$(find /Applications -name "GrowBox Pro.app" -maxdepth 1 | head -1)
           LLAMA_SERVER=$(find "$APP" -name "llama-server" | head -1)
@@ -166,6 +173,7 @@ jobs:
 
       # ── Entitlements check ────────────────────────────────────────────────────
       - name: "TEST 5: Verify entitlements and ad-hoc signing"
+        if: always()
         run: |
           APP=$(find /Applications -name "GrowBox Pro.app" -maxdepth 1 | head -1)
           echo "--- Code signature ---"
@@ -180,6 +188,7 @@ jobs:
 
       # ── Node.js + Playwright module test ─────────────────────────────────────
       - name: "TEST 6: Playwright-fetcher module loads correctly"
+        if: always()
         run: |
           APP=$(find /Applications -name "GrowBox Pro.app" -maxdepth 1 | head -1)
           NODE=$(find "$APP" -name "node" -not -name "*.js" | head -1)
