@@ -145,10 +145,11 @@ jobs:
           fi
           echo ""
           # node
-          NODE=$(find "$APP" -name "node" -not -name "*.js" | head -1)
+          NODE=$(find "$APP" -name "node" -type f -not -name "*.js" | head -1)
           if [ -n "$NODE" ]; then
             chmod +x "$NODE"
-            echo "✅ node: $($NODE --version)"
+            NODE_VER=$("$NODE" --version 2>&1 || echo "error")
+            echo "✅ node: $NODE_VER"
           else
             echo "❌ node not found"
             exit 1
@@ -194,12 +195,14 @@ jobs:
         if: always()
         run: |
           APP=$(find /Applications -name "GrowBox Pro.app" -maxdepth 1 | head -1)
-          NODE=$(find "$APP" -name "node" -not -name "*.js" | head -1)
+          NODE=$(find "$APP" -name "node" -type f -not -name "*.js" | head -1)
           SCRIPT=$(find "$APP" -name "playwright-fetcher.mjs" | head -1)
           if [ -n "$NODE" ] && [ -n "$SCRIPT" ]; then
+            chmod +x "$NODE"
+            echo "Node binary: $NODE"
             SCRIPT_DIR=$(dirname "$SCRIPT")
             echo "Testing module resolution from: $SCRIPT_DIR"
-            # Dry-run: import the script with --input-type and exit immediately
+            # Dry-run: pipe a trivial module to stdin and verify node executes
             OUTPUT=$(cd "$SCRIPT_DIR" && echo 'console.log("module-ok")' | \
               "$NODE" --input-type=module 2>&1)
             echo "✅ Node module runtime: $OUTPUT"

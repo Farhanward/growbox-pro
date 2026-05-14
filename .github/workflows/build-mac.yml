@@ -101,7 +101,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src-tauri/resources/llama
-          key: llama-cpp-prebuilt-${{ env.LLAMA_RELEASE }}-${{ matrix.llama_asset }}-v1
+          key: llama-cpp-prebuilt-${{ env.LLAMA_RELEASE }}-${{ matrix.llama_asset }}-v2
 
       - name: Download llama.cpp ${{ env.LLAMA_RELEASE }} (${{ matrix.llama_asset }})
         if: steps.cache-llama.outputs.cache-hit != 'true'
@@ -125,11 +125,26 @@ jobs:
               echo "  WARNING: $BIN not found in release archive"
             fi
           done
-          # Copy all dylibs and metallib
+          # Copy all dylibs and metallib (regular files only — symlinks handled below)
           find /tmp/llama-extracted -type f \( -name '*.dylib' -o -name '*.metallib' \) \
             -exec cp {} "$DEST/" \;
-          # Fix @rpath to @loader_path so dylibs resolve inside .app bundle
+          # Create unversioned copies so @rpath deps resolve at runtime.
+          # Pre-built llama.cpp links against libfoo.N.dylib but ships libfoo.N.M.P.dylib.
           cd "$DEST"
+          for dep in $(otool -L llama-server llama-mtmd-cli 2>/dev/null \
+                       | grep "@rpath/" | awk '{print $1}' | sort -u); do
+            expected=$(basename "$dep")   # e.g. libllama-common.0.dylib
+            if [ ! -f "$expected" ]; then
+              prefix="${expected%%.*}"    # e.g. libllama-common
+              actual=$(ls "${prefix}".*.dylib 2>/dev/null | head -1)
+              if [ -n "$actual" ]; then
+                cp "$actual" "$expected"
+                install_name_tool -id "@loader_path/$expected" "$expected" 2>/dev/null || true
+                echo "  Created: $expected (from $actual)"
+              fi
+            fi
+          done
+          # Fix @rpath to @loader_path so all dylibs resolve inside .app bundle
           for f in llama-server llama-mtmd-cli *.dylib; do
             [ -f "$f" ] || continue
             otool -L "$f" 2>/dev/null | awk 'NR>1 {print $1}' | while read -r dep; do
