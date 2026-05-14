@@ -38,19 +38,18 @@ jobs:
           ls -lh "$DMG"
 
       # ── Mount and install ─────────────────────────────────────────────────────
-      - name: Mount DMG
+      - name: Mount DMG and install .app
         id: mount
         run: |
-          MOUNT_POINT=$(hdiutil attach "${{ steps.dmg.outputs.path }}" \
+          MOUNT_POINT="/tmp/growbox-dmg-mount"
+          mkdir -p "$MOUNT_POINT"
+          hdiutil attach "${{ steps.dmg.outputs.path }}" \
             -nobrowse -noautoopen -readonly \
-            | awk 'END{print $NF}')
+            -mountpoint "$MOUNT_POINT"
           echo "mount=$MOUNT_POINT" >> "$GITHUB_OUTPUT"
           echo "Mounted at: $MOUNT_POINT"
           ls -la "$MOUNT_POINT/"
-
-      - name: Install .app to /Applications
-        run: |
-          APP=$(find "${{ steps.mount.outputs.mount }}" -name "*.app" -maxdepth 1 | head -1)
+          APP=$(find "$MOUNT_POINT" -name "*.app" -maxdepth 1 | head -1)
           echo "Installing: $APP"
           cp -R "$APP" /Applications/
           APP_NAME=$(basename "$APP")
@@ -59,7 +58,7 @@ jobs:
 
       - name: Unmount DMG
         if: always()
-        run: hdiutil detach "${{ steps.mount.outputs.mount }}" -quiet || true
+        run: hdiutil detach "/tmp/growbox-dmg-mount" -quiet || true
 
       # ── App bundle structure verification ────────────────────────────────────
       - name: "TEST 1: Verify app bundle structure"
