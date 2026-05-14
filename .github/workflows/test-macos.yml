@@ -55,6 +55,9 @@ jobs:
           APP_NAME=$(basename "$APP")
           echo "Installed: /Applications/$APP_NAME"
           ls -la "/Applications/$APP_NAME/Contents/MacOS/"
+          # Remove macOS quarantine attribute so bundled binaries can execute
+          xattr -cr "/Applications/$APP_NAME" 2>/dev/null || true
+          echo "Quarantine cleared."
 
       - name: Unmount DMG
         if: always()
