@@ -4,43 +4,117 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture (arm64 builds on macos-14; x86_64 builds on macos-13)"
+        required: false
+        default: "arm64"
+        type: choice
+        options: [arm64, x86_64]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  NODE_VERSION: "22"
+  # Pinned Node.js LTS release used when bundling the macOS node binary into
+  # app resources (separate from the GitHub Actions runner's Node install).
+  NODE_LTS_RELEASE: "v22.15.0"
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            rust_target: aarch64-apple-darwin
+            node_platform: darwin-arm64
+          - arch: x86_64
+            runner: macos-13
+            rust_target: x86_64-apple-darwin
+            node_platform: darwin-x64
+
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: ${{ matrix.rust_target }}
 
       - name: Install JS deps
         run: npm ci || npm install
 
+      - name: Sync Playwright resources
+        run: node scripts/sync-playwright-resource.mjs
+
+      # ── Bundle macOS Node.js binary into app resources ───────────────────────
+      # The app spawns `resources/node/node` to run playwright-fetcher.mjs.
+      # We download the official Node.js tarball and extract just the binary.
+      - name: Bundle macOS Node.js into resources/node/
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/resources/node
+          # Remove any Windows-only binary that may have been committed.
+          rm -f src-tauri/resources/node/node.exe
+          NODE_TARBALL="node-${NODE_LTS_RELEASE}-${{ matrix.node_platform }}.tar.gz"
+          NODE_URL="https://nodejs.org/dist/${NODE_LTS_RELEASE}/${NODE_TARBALL}"
+          echo "Downloading ${NODE_URL}"
+          curl -fsSL "${NODE_URL}" -o /tmp/node.tar.gz
+          # Extract only the bin/node binary from the tarball.
+          tar -xzf /tmp/node.tar.gz \
+            --strip-components=2 \
+            -C /tmp \
+            "node-${NODE_LTS_RELEASE}-${{ matrix.node_platform }}/bin/node"
+          mv /tmp/node src-tauri/resources/node/node
+          chmod +x src-tauri/resources/node/node
+          echo "Bundled Node.js: $(src-tauri/resources/node/node --version)"
+
+      # ── Bundle macOS FFmpeg static binary ────────────────────────────────────
+      # evermeet.cx provides a self-contained static ffmpeg build for macOS.
+      # vision.rs resolves_ffmpeg() looks in resources/llama/ first.
+      - name: Bundle macOS FFmpeg into resources/llama/
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/resources/llama
+          rm -f src-tauri/resources/llama/ffmpeg.exe
+          FFMPEG_URL="https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip"
+          echo "Downloading static FFmpeg from evermeet.cx"
+          curl -fsSL "${FFMPEG_URL}" -o /tmp/ffmpeg.zip
+          # The evermeet.cx zip contains a single `ffmpeg` binary at the root.
+          unzip -o /tmp/ffmpeg.zip ffmpeg -d /tmp/ffmpeg-release
+          mv /tmp/ffmpeg-release/ffmpeg src-tauri/resources/llama/ffmpeg
+          chmod +x src-tauri/resources/llama/ffmpeg
+          echo "Bundled FFmpeg: $(src-tauri/resources/llama/ffmpeg -version 2>&1 | head -1)"
+
+      # ── Remove Windows-only llama binaries ───────────────────────────────────
+      - name: Strip Windows llama binaries from source tree
+        run: rm -f src-tauri/resources/llama/*.exe src-tauri/resources/llama/*.dll
+
+      # ── Build llama.cpp (llama-server + llama-mtmd-cli) with Metal ───────────
+      # Cache by OS + arch + a version bump key so we can force a rebuild when
+      # the llama.cpp API or Metal backend changes.
       - name: Cache llama.cpp build
         id: cache-llama
         uses: actions/cache@v4
         with:
           path: src-tauri/resources/llama
-          key: llama-cpp-${{ runner.os }}-${{ runner.arch }}-static-metal-v1
+          key: llama-cpp-${{ runner.os }}-${{ matrix.arch }}-metal-v3
 
       - name: Build llama.cpp from source (Metal + static)
         if: steps.cache-llama.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p src-tauri/resources/llama
           git clone --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama-src
           cd /tmp/llama-src
+
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_METAL=ON \
@@ -49,51 +123,79 @@ jobs:
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_EXAMPLES=ON \
             -DLLAMA_BUILD_SERVER=ON
-          cmake --build build --config Release -j --target llama-server
-          # Copy the server binary + every dylib produced by the build (ggml,
-          # llama, mtmd, etc.) so the app stays self-contained.
-          cp build/bin/llama-server "$GITHUB_WORKSPACE/src-tauri/resources/llama/"
+
+          # Build the two binaries the app depends on.
+          cmake --build build --config Release -j \
+            --target llama-server \
+            --target llama-mtmd-cli
+
+          DEST="$GITHUB_WORKSPACE/src-tauri/resources/llama"
+
+          cp build/bin/llama-server   "$DEST/"
+          cp build/bin/llama-mtmd-cli "$DEST/"
+
+          # Copy every .dylib produced (ggml, llama, mtmd, …) so the bundle
+          # remains fully self-contained after macOS code-signing.
           find build -type f \( -name '*.dylib' -o -name 'default.metallib' \) \
-            -exec cp {} "$GITHUB_WORKSPACE/src-tauri/resources/llama/" \;
-          chmod +x "$GITHUB_WORKSPACE/src-tauri/resources/llama/llama-server"
-          # Rewrite library load paths to be relative to the binary's folder so
-          # the bundle works after install_name_tool moves files into the .app.
-          cd "$GITHUB_WORKSPACE/src-tauri/resources/llama"
-          for f in llama-server *.dylib; do
+            -exec cp {} "$DEST/" \;
+
+          chmod +x "$DEST/llama-server" "$DEST/llama-mtmd-cli"
+
+          # Rewrite @rpath references to @loader_path so the dylibs resolve
+          # correctly regardless of where macOS installs the .app bundle.
+          cd "$DEST"
+          for f in llama-server llama-mtmd-cli *.dylib; do
             [ -f "$f" ] || continue
             otool -L "$f" | awk 'NR>1 {print $1}' | while read -r dep; do
               base=$(basename "$dep")
               if [ -f "$base" ] && [ "$dep" != "@loader_path/$base" ]; then
-                install_name_tool -change "$dep" "@loader_path/$base" "$f" 2>/dev/null || true
+                install_name_tool -change "$dep" "@loader_path/$base" "$f" \
+                  2>/dev/null || true
               fi
             done
-            # Fix the dylib's own id too.
             if [[ "$f" == *.dylib ]]; then
               install_name_tool -id "@loader_path/$f" "$f" 2>/dev/null || true
             fi
           done
-          ls -la
 
-      - name: Verify llama-server bundled
+      # ── Verify all required binaries are present ─────────────────────────────
+      - name: Verify bundled binaries
         run: |
-          test -f src-tauri/resources/llama/llama-server
-          file src-tauri/resources/llama/llama-server
+          echo "=== resources/llama/ ==="
           ls -la src-tauri/resources/llama/
+          echo "=== resources/node/ ==="
+          ls -la src-tauri/resources/node/
+          echo "=== Binary architectures ==="
+          file src-tauri/resources/llama/llama-server
+          file src-tauri/resources/llama/llama-mtmd-cli
+          file src-tauri/resources/llama/ffmpeg
+          file src-tauri/resources/node/node
+          echo "=== Required binaries check ==="
+          test -f src-tauri/resources/llama/llama-server   && echo "✓ llama-server"
+          test -f src-tauri/resources/llama/llama-mtmd-cli && echo "✓ llama-mtmd-cli"
+          test -f src-tauri/resources/llama/ffmpeg          && echo "✓ ffmpeg"
+          test -f src-tauri/resources/node/node             && echo "✓ node"
 
-      - name: Build Tauri app (unsigned)
+      # ── Tauri build ───────────────────────────────────────────────────────────
+      # APPLE_SIGNING_IDENTITY="-" produces an ad-hoc signed binary that runs
+      # on the builder machine and is suitable for testing.
+      # For distribution, set APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+      # and APPLE_SIGNING_IDENTITY as repository secrets.
+      - name: Build Tauri app (ad-hoc signed)
         env:
           APPLE_SIGNING_IDENTITY: "-"
-        run: npm run tauri build -- --target aarch64-apple-darwin
+        run: npm run tauri build -- --target ${{ matrix.rust_target }}
 
-      - name: Upload DMG
-        uses: actions/upload-artifact@v5
+      # ── Upload artifacts ──────────────────────────────────────────────────────
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: ReachOptimizer-macOS-arm64
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: GrowBox-Pro-macOS-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
 
       - name: Attach DMG to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          files: src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: false

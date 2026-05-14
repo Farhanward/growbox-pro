@@ -1,21 +1,39 @@
-// Orchestrates: scrape client → scrape competitors → load niche data → build
-// the LLM context block. Each stage is non-fatal — partial data still yields
-// a useful report.
+// Orchestrates official/local signals only: OAuth account snapshots, the
+// bundled niche matrix, and competitor handles for strategy reference.
+// DOM/HTML scraping is intentionally absent; post metrics flow through
+// data_fetcher.rs, which intercepts authenticated JSON from the isolated
+// browser session.
 
-use crate::scrapers::{fetch_instagram, fetch_snapchat, fetch_tiktok, PublicProfile};
-use crate::ClientInput;
+use crate::{oauth, ClientInput};
 use anyhow::Result;
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct AccountSnapshot {
+    pub platform: String,
+    pub handle: Option<String>,
+    pub summary: String,
+    pub source: String,
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct InsightBundle {
-    pub client_profiles: Vec<PublicProfile>,
-    pub competitors: Vec<PublicProfile>,
+    pub client_profiles: Vec<AccountSnapshot>,
+    pub competitor_handles: Vec<String>,
     pub trending_hashtags: Vec<String>,
     pub best_times_weekday: Vec<String>,
     pub best_times_weekend: Vec<String>,
+}
+
+fn canonical_niche(niche: &str) -> &str {
+    match niche.trim() {
+        "مصور" | "مصور فوتوغرافي" | "استوديو تصوير" => "تصوير",
+        "مطعم" | "كافيه" | "مقهى" | "حلويات" => "طعام",
+        "متجر ملابس" | "عبايات" | "أزياء" | "فاشن" => "موضة",
+        other => other,
+    }
 }
 
 fn load_niche_data(app: &AppHandle, niche: &str, countries: &[String]) -> NicheData {
@@ -31,7 +49,7 @@ fn load_niche_data(app: &AppHandle, niche: &str, countries: &[String]) -> NicheD
     let Ok(v): std::result::Result<serde_json::Value, _> = serde_json::from_str(&text) else {
         return out;
     };
-    let node = &v[niche];
+    let node = &v[canonical_niche(niche)];
     if node.is_null() {
         return out;
     }
@@ -75,22 +93,28 @@ where
 {
     let mut bundle = InsightBundle::default();
 
-    // 1) scrape client's own public profiles
-    on_stage("client", "تحليل حسابات العميل…");
-    if let Some(u) = input.tiktok.as_deref().filter(|s| !s.trim().is_empty()) {
-        if let Ok(p) = fetch_tiktok(u).await {
-            bundle.client_profiles.push(p);
+    // 1) official connected-account snapshots. No DOM parsing.
+    on_stage("client", "قراءة بيانات الحسابات الرسمية المرتبطة…");
+    for (platform, handle) in [
+        ("instagram", input.instagram.clone()),
+        ("tiktok", input.tiktok.clone()),
+    ] {
+        if let Ok(account) = oauth::collect_account_data(platform).await {
+            bundle.client_profiles.push(AccountSnapshot {
+                platform: account.platform,
+                handle,
+                summary: account.summary,
+                source: "official_api".into(),
+            });
         }
     }
-    if let Some(u) = input.instagram.as_deref().filter(|s| !s.trim().is_empty()) {
-        if let Ok(p) = fetch_instagram(u).await {
-            bundle.client_profiles.push(p);
-        }
-    }
-    if let Some(u) = input.snapchat.as_deref().filter(|s| !s.trim().is_empty()) {
-        if let Ok(p) = fetch_snapchat(u).await {
-            bundle.client_profiles.push(p);
-        }
+    if let Some(handle) = input.snapchat.as_ref().filter(|s| !s.trim().is_empty()) {
+        bundle.client_profiles.push(AccountSnapshot {
+            platform: "snapchat".into(),
+            handle: Some(handle.clone()),
+            summary: "Snapchat handle محفوظ كمدخل من المستخدم؛ لا توجد عملية HTML scraping.".into(),
+            source: "user_input".into(),
+        });
     }
 
     // 2) niche dataset
@@ -100,20 +124,10 @@ where
     bundle.best_times_weekday = nd.weekday;
     bundle.best_times_weekend = nd.weekend;
 
-    // 3) competitor scan (cap to 5 to keep latency reasonable)
-    on_stage("competitors", "تحليل المنافسين…");
-    for handle in nd.competitor_handles.iter().take(5) {
-        // try TikTok first (more uniform HTML), fall back to IG
-        if let Ok(p) = fetch_tiktok(handle).await {
-            if p.followers.is_some() {
-                bundle.competitors.push(p);
-                continue;
-            }
-        }
-        if let Ok(p) = fetch_instagram(handle).await {
-            bundle.competitors.push(p);
-        }
-    }
+    // 3) competitor reference handles only; real metrics must come from
+    // authenticated JSON interception via data_fetcher.rs.
+    on_stage("competitors", "إضافة مقابض المنافسين كمرجع بدون scraping…");
+    bundle.competitor_handles = nd.competitor_handles.into_iter().take(5).collect();
 
     on_stage("report", "توليد التقرير بالذكاء الاصطناعي…");
     Ok(bundle)
@@ -125,33 +139,27 @@ pub fn build_context_block(b: &InsightBundle, input: &ClientInput) -> String {
         input.name, input.niche, input.countries, input.plan_days));
 
     if !b.client_profiles.is_empty() {
-        s.push_str("## لقطة حسابات العميل (بيانات عامة)\n");
+        s.push_str("## لقطة حسابات العميل (مصادر رسمية/محلية)\n");
         for p in &b.client_profiles {
             s.push_str(&format!(
-                "- **{}** @{}: متابعين={}, متابَع={}, منشورات={}\n  البايو: {}\n",
+                "- **{}** {} — المصدر: {}\n  {}\n",
                 p.platform,
-                p.username,
-                p.followers.unwrap_or(0),
-                p.following.unwrap_or(0),
-                p.posts.unwrap_or(0),
-                p.bio.clone().unwrap_or_default()
+                p.handle
+                    .as_deref()
+                    .map(|h| format!("@{}", h.trim_start_matches('@')))
+                    .unwrap_or_else(|| "(بدون handle)".into()),
+                p.source,
+                p.summary
             ));
         }
         s.push('\n');
     }
 
-    if !b.competitors.is_empty() {
-        s.push_str("## منافسون في نفس النيتش (لقطات عامة)\n");
-        for c in &b.competitors {
-            s.push_str(&format!(
-                "- **{}** @{} — متابعين={}, منشورات={}, البايو: {}\n",
-                c.platform,
-                c.username,
-                c.followers.unwrap_or(0),
-                c.posts.unwrap_or(0),
-                c.bio.clone().unwrap_or_default()
-            ));
-        }
+    if !b.competitor_handles.is_empty() {
+        s.push_str("## منافسون مرجعيون من مصفوفة النيتش\n");
+        s.push_str("- ");
+        s.push_str(&b.competitor_handles.join("\n- "));
+        s.push_str("\nملاحظة: لا تُستخدم أرقام منافسين إلا إذا تم جلبها عبر data_fetcher.rs أو CSV رسمي.\n");
         s.push('\n');
     }
 

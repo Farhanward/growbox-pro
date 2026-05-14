@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Reach Optimizer",
-  "version": "0.3.2",
-  "identifier": "com.zeed.reachoptimizer",
+  "productName": "GrowBox Pro",
+  "version": "0.4.0",
+  "identifier": "app.growbox.pro",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Reach Optimizer",
+        "title": "GrowBox Pro",
         "width": 1100,
         "height": 760,
         "minWidth": 960,
@@ -29,10 +29,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app"],
+    "targets": ["dmg", "app", "msi", "nsis"],
     "category": "SocialNetworking",
-    "shortDescription": "خطة انتشار للمصورين والمبدعين الخليجيين",
-    "longDescription": "تطبيق محلي يحلّل حسابات السوشيال ميديا العامة ويولّد خطة انتشار شهرية بدون تسجيل دخول.",
+    "shortDescription": "GrowBox Pro لتجهيز بوستات السوشيال ميديا الخليجية",
+    "longDescription": "GrowBox Pro — تطبيق مرخص لتجهيز منشورات إنستغرام وتيك توك اعتمادًا على بيانات الحساب ووصف الوسائط مع ذكاء اصطناعي محلي.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,10 +40,22 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/llama/*", "resources/data/*"],
+    "resources": [
+      "resources/llama/*",
+      "resources/node/*",
+      "resources/data/*",
+      "resources/playwright-fetcher.mjs",
+      "resources/node_modules/playwright-core/**/*"
+    ],
     "macOS": {
       "minimumSystemVersion": "12.0",
-      "frameworks": []
+      "frameworks": [],
+      "entitlements": "Entitlements.plist",
+      "dmg": {
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 },
+        "windowSize": { "width": 660, "height": 400 }
+      }
     }
   }
 }

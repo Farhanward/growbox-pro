@@ -44,12 +44,12 @@ html, body {
   text-rendering: optimizeLegibility;
 }
 
-h1, h2, h3 { letter-spacing: -0.02em; font-weight: 600; }
+h1, h2, h3 { letter-spacing: 0; font-weight: 600; }
 
 @layer components {
   .surface {
     background: var(--surface);
-    border-radius: 22px;
+    border-radius: 10px;
     box-shadow: var(--shadow-1);
   }
   .vibrancy {
@@ -154,6 +154,309 @@ h1, h2, h3 { letter-spacing: -0.02em; font-weight: 600; }
     height: 100%;
     background: var(--primary);
     transition: width 300ms var(--ease-spring);
+  }
+
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+  }
+
+  .loading-panel {
+    width: min(440px, 100%);
+    background: var(--surface);
+    color: var(--text);
+    border: 0.5px solid var(--hairline);
+    border-radius: 18px;
+    box-shadow: var(--shadow-1);
+    padding: 22px;
+  }
+
+  .loading-spinner {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    background: rgba(10, 132, 255, 0.14);
+    color: var(--primary);
+    flex: none;
+  }
+
+  .time-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .time-cell {
+    min-height: 64px;
+    border: 0.5px solid var(--hairline);
+    border-radius: 12px;
+    background: var(--surface-2);
+    padding: 10px 12px;
+  }
+
+  .time-cell span {
+    display: block;
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 4px;
+  }
+
+  .time-cell strong {
+    display: block;
+    font-size: 24px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+
+  .new-account-box {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 14px;
+    border: 0.5px solid var(--hairline);
+    border-radius: 12px;
+    background: var(--surface-2);
+    padding: 14px;
+  }
+
+  .new-account-box strong,
+  .new-account-box small {
+    display: block;
+  }
+
+  .new-account-box small {
+    margin-top: 4px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+
+  .workflow-strip {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .workflow-step {
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text-2);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .workflow-step b {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .workflow-step.done {
+    border-color: rgba(48, 209, 88, 0.42);
+    color: var(--text);
+  }
+  .workflow-step.done b {
+    background: rgba(48, 209, 88, 0.18);
+    color: var(--success);
+  }
+
+  .step-card {
+    padding: 24px;
+    border: 0.5px solid var(--hairline);
+  }
+  .step-heading {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .step-heading h2 {
+    font-size: 19px;
+    line-height: 1.35;
+  }
+  .step-heading p {
+    margin-top: 3px;
+    color: var(--text-2);
+    font-size: 13px;
+  }
+  .step-number {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: var(--primary);
+    color: #fff;
+    font-weight: 700;
+  }
+
+  .setup-panel {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .setup-panel h3,
+  .result-hero h3,
+  .draft-panel h3,
+  .evolution-grid h3 {
+    font-size: 17px;
+    line-height: 1.4;
+  }
+  .setup-panel p,
+  .result-hero p,
+  .draft-panel p {
+    color: var(--text-2);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .session-row,
+  .action-row,
+  .list-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .session-row {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 0.5px solid var(--hairline);
+  }
+
+  .advanced-box {
+    margin-top: 18px;
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .advanced-box > summary {
+    cursor: pointer;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .btn-small {
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+
+  .result-hero,
+  .evolution-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .result-hero > div,
+  .evolution-grid > div {
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .score-text {
+    font-size: 42px !important;
+    line-height: 1 !important;
+    color: var(--primary) !important;
+    font-weight: 800;
+  }
+
+  .preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+  }
+  .preview-card {
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .preview-card h3 {
+    font-size: 17px;
+  }
+  .tag-cloud,
+  .metric-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .signal-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .signal-grid span,
+  .metric-strip span {
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+
+  .draft-panel {
+    margin-top: 18px;
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .list-stack {
+    display: grid;
+    gap: 8px;
+  }
+  .list-row {
+    width: 100%;
+    border: 0.5px solid var(--hairline);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: transparent;
+  }
+
+  @media (max-width: 900px) {
+    .workflow-strip,
+    .result-hero,
+    .evolution-grid,
+    .preview-grid {
+      grid-template-columns: 1fr;
+    }
+    .workflow-step {
+      justify-content: flex-start;
+      padding: 0 12px;
+    }
   }
 }
 

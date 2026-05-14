@@ -1,0 +1,144 @@
+use serde::Serialize;
+use std::process::Command;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemPreflight {
+    pub ram_gb: f64,
+    pub vram_gb: Option<f64>,
+    pub avx2: bool,
+    pub cuda: bool,
+    pub metal: bool,
+    pub recommended_profile: String,
+    pub vision_supported: bool,
+    pub warnings: Vec<String>,
+}
+
+pub fn run() -> SystemPreflight {
+    let ram_gb = total_ram_gb().unwrap_or(0.0);
+    let vram_gb = vram_gb();
+    let avx2 = avx2_supported();
+    let cuda = cuda_supported();
+    let metal = cfg!(target_os = "macos");
+    let mut warnings = Vec::new();
+
+    if ram_gb > 0.0 && ram_gb < 8.0 {
+        warnings.push("الذاكرة أقل من 8GB؛ استخدم نماذج 4-bit فقط وقد يكون Vision بطيئاً.".into());
+    }
+    if !avx2 {
+        warnings.push("المعالج لا يعلن دعم AVX2؛ سيتم تجنب إعدادات ثقيلة.".into());
+    }
+    if vram_gb.unwrap_or(0.0) < 4.0 {
+        warnings.push("ذاكرة كرت الشاشة منخفضة أو غير معروفة؛ سيتم التشغيل على CPU عند الحاجة.".into());
+    }
+
+    let recommended_profile = if ram_gb >= 24.0 && vram_gb.unwrap_or(0.0) >= 8.0 {
+        "high-q5-vision".to_string()
+    } else if ram_gb >= 12.0 {
+        "balanced-q4".to_string()
+    } else {
+        "safe-q4-low-memory".to_string()
+    };
+
+    let vision_supported = ram_gb >= 8.0 && avx2;
+    if !vision_supported {
+        warnings.push("المعالجة البصرية المحلية قد لا تكون مستقرة على هذا الجهاز.".into());
+    }
+
+    SystemPreflight {
+        ram_gb,
+        vram_gb,
+        avx2,
+        cuda,
+        metal,
+        recommended_profile,
+        vision_supported,
+        warnings,
+    }
+}
+
+fn total_ram_gb() -> Option<f64> {
+    #[cfg(windows)]
+    {
+        let mut cmd = hidden_command("powershell");
+        let out = cmd
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
+            ])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let bytes = text.trim().parse::<f64>().ok()?;
+        return Some((bytes / 1_073_741_824.0 * 10.0).round() / 10.0);
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+fn vram_gb() -> Option<f64> {
+    if let Ok(out) = hidden_command("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Some(first) = text.lines().next() {
+                if let Ok(mib) = first.trim().parse::<f64>() {
+                    return Some((mib / 1024.0 * 10.0).round() / 10.0);
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let mut cmd = hidden_command("powershell");
+        let out = cmd
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_VideoController | Sort-Object AdapterRAM -Descending | Select-Object -First 1 -ExpandProperty AdapterRAM)",
+            ])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let bytes = text.trim().parse::<f64>().ok()?;
+        if bytes > 0.0 {
+            return Some((bytes / 1_073_741_824.0 * 10.0).round() / 10.0);
+        }
+    }
+    None
+}
+
+fn avx2_supported() -> bool {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        std::is_x86_feature_detected!("avx2")
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        false
+    }
+}
+
+fn cuda_supported() -> bool {
+    hidden_command("nvidia-smi")
+        .arg("-L")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+fn hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
