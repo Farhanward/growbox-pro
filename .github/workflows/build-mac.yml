@@ -205,9 +205,10 @@ jobs:
           # Symlink to /Applications (standard DMG drag-install)
           ln -sf /Applications "$STAGING/Applications"
 
-          # Friendly one-click installer script (stored as a repo file to avoid YAML/heredoc conflicts)
-          cp scripts/macos-installer.command "$STAGING/Install GrowBox Pro.command"
-          chmod +x "$STAGING/Install GrowBox Pro.command"
+          # Compile AppleScript into a .app so the installer shows a GUI dialog
+          # (no Terminal window — just "Install" / "Done" dialogs for end users)
+          osacompile -o "$STAGING/Install GrowBox Pro.app" scripts/macos-installer.applescript
+          echo "Compiled installer app: $(du -sh "$STAGING/Install GrowBox Pro.app" | cut -f1)"
 
           # Repack into the same DMG path (replaces original)
           hdiutil create \
