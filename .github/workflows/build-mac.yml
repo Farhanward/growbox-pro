@@ -183,6 +183,70 @@ jobs:
           APPLE_SIGNING_IDENTITY: "-"
         run: npm run tauri build -- --target ${{ matrix.rust_target }}
 
+      # ── Repack DMG with installer script ─────────────────────────────────────
+      - name: Add installer script to DMG
+        run: |
+          set -euo pipefail
+          RUST_TARGET="${{ matrix.rust_target }}"
+          TAURI_DMG=$(find "src-tauri/target/$RUST_TARGET/release/bundle/dmg" -name "*.dmg" | head -1)
+          echo "Original DMG: $TAURI_DMG ($(du -sh "$TAURI_DMG" | cut -f1))"
+
+          # Mount the Tauri-built DMG
+          hdiutil attach "$TAURI_DMG" \
+            -nobrowse -noautoopen -readonly \
+            -mountpoint /tmp/dmg-src-mount
+
+          # Stage contents into a temp dir
+          STAGING=$(mktemp -d)
+          APP=$(find /tmp/dmg-src-mount -name "*.app" -maxdepth 1 | head -1)
+          cp -R "$APP" "$STAGING/"
+          hdiutil detach /tmp/dmg-src-mount -quiet
+
+          # Symlink to /Applications (standard DMG drag-install)
+          ln -sf /Applications "$STAGING/Applications"
+
+          # Friendly one-click installer script
+          cat > "$STAGING/Install GrowBox Pro.command" << 'INSTALLER'
+#!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP=$(find "$SCRIPT_DIR" -name "*.app" -maxdepth 1 | head -1)
+APP_NAME=$(basename "$APP")
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Installing $APP_NAME"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Remove old version if present
+if [ -d "/Applications/$APP_NAME" ]; then
+  echo "🗑  Removing previous version..."
+  rm -rf "/Applications/$APP_NAME"
+fi
+
+echo "📦 Copying to /Applications ..."
+cp -R "$APP" /Applications/
+
+echo "🔓 Removing macOS security restriction..."
+xattr -cr "/Applications/$APP_NAME"
+
+echo ""
+echo "✅ Installed successfully!"
+echo "🚀 Launching $APP_NAME ..."
+echo ""
+open "/Applications/$APP_NAME"
+INSTALLER
+          chmod +x "$STAGING/Install GrowBox Pro.command"
+
+          # Repack into the same DMG path (replaces original)
+          hdiutil create \
+            -volname "GrowBox Pro" \
+            -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "$TAURI_DMG"
+
+          echo "Repacked DMG: $TAURI_DMG ($(du -sh "$TAURI_DMG" | cut -f1))"
+          rm -rf "$STAGING"
+
       # ── Upload ────────────────────────────────────────────────────────────────
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
