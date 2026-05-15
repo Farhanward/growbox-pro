@@ -335,6 +335,11 @@ async fn run_qwen2vl(app: &AppHandle, model: &Path, mmproj: &Path, image: &Path)
         .arg("360")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "macos")]
+    {
+        cmd.env("DYLD_LIBRARY_PATH", &lib_dir);
+        cmd.env("DYLD_FALLBACK_LIBRARY_PATH", &lib_dir);
+    }
     #[cfg(windows)]
     {
         let path = std::env::var("PATH").unwrap_or_default();

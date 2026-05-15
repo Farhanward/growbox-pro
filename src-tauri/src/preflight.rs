@@ -24,14 +24,27 @@ pub fn run() -> SystemPreflight {
     if ram_gb > 0.0 && ram_gb < 8.0 {
         warnings.push("الذاكرة أقل من 8GB؛ استخدم نماذج 4-bit فقط وقد يكون Vision بطيئاً.".into());
     }
+    // AVX2 is irrelevant on Apple Silicon — Metal handles acceleration instead.
+    #[cfg(not(target_arch = "aarch64"))]
     if !avx2 {
         warnings.push("المعالج لا يعلن دعم AVX2؛ سيتم تجنب إعدادات ثقيلة.".into());
     }
+    // On macOS, unified memory serves as both RAM and VRAM — skip the VRAM warning.
+    #[cfg(not(target_os = "macos"))]
     if vram_gb.unwrap_or(0.0) < 4.0 {
         warnings.push("ذاكرة كرت الشاشة منخفضة أو غير معروفة؛ سيتم التشغيل على CPU عند الحاجة.".into());
     }
 
-    let recommended_profile = if ram_gb >= 24.0 && vram_gb.unwrap_or(0.0) >= 8.0 {
+    // On macOS, Metal replaces CUDA/VRAM — profile based on unified RAM only.
+    let recommended_profile = if metal {
+        if ram_gb >= 24.0 {
+            "high-q5-vision".to_string()
+        } else if ram_gb >= 12.0 {
+            "balanced-q4".to_string()
+        } else {
+            "safe-q4-low-memory".to_string()
+        }
+    } else if ram_gb >= 24.0 && vram_gb.unwrap_or(0.0) >= 8.0 {
         "high-q5-vision".to_string()
     } else if ram_gb >= 12.0 {
         "balanced-q4".to_string()
@@ -39,7 +52,12 @@ pub fn run() -> SystemPreflight {
         "safe-q4-low-memory".to_string()
     };
 
-    let vision_supported = ram_gb >= 8.0 && avx2;
+    // On Apple Silicon, Metal is the accelerator — AVX2 absence is not a blocker.
+    let vision_supported = if metal {
+        ram_gb >= 8.0
+    } else {
+        ram_gb >= 8.0 && avx2
+    };
     if !vision_supported {
         warnings.push("المعالجة البصرية المحلية قد لا تكون مستقرة على هذا الجهاز.".into());
     }
@@ -72,7 +90,17 @@ fn total_ram_gb() -> Option<f64> {
         let bytes = text.trim().parse::<f64>().ok()?;
         return Some((bytes / 1_073_741_824.0 * 10.0).round() / 10.0);
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let out = Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let bytes = text.trim().parse::<f64>().ok()?;
+        return Some((bytes / 1_073_741_824.0 * 10.0).round() / 10.0);
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         None
     }
