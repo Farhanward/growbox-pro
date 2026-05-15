@@ -205,36 +205,8 @@ jobs:
           # Symlink to /Applications (standard DMG drag-install)
           ln -sf /Applications "$STAGING/Applications"
 
-          # Friendly one-click installer script
-          cat > "$STAGING/Install GrowBox Pro.command" << 'INSTALLER'
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP=$(find "$SCRIPT_DIR" -name "*.app" -maxdepth 1 | head -1)
-APP_NAME=$(basename "$APP")
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  Installing $APP_NAME"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-# Remove old version if present
-if [ -d "/Applications/$APP_NAME" ]; then
-  echo "🗑  Removing previous version..."
-  rm -rf "/Applications/$APP_NAME"
-fi
-
-echo "📦 Copying to /Applications ..."
-cp -R "$APP" /Applications/
-
-echo "🔓 Removing macOS security restriction..."
-xattr -cr "/Applications/$APP_NAME"
-
-echo ""
-echo "✅ Installed successfully!"
-echo "🚀 Launching $APP_NAME ..."
-echo ""
-open "/Applications/$APP_NAME"
-INSTALLER
+          # Friendly one-click installer script (stored as a repo file to avoid YAML/heredoc conflicts)
+          cp scripts/macos-installer.command "$STAGING/Install GrowBox Pro.command"
           chmod +x "$STAGING/Install GrowBox Pro.command"
 
           # Repack into the same DMG path (replaces original)
