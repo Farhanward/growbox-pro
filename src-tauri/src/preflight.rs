@@ -36,28 +36,10 @@ pub fn run() -> SystemPreflight {
     }
 
     // On macOS, Metal replaces CUDA/VRAM — profile based on unified RAM only.
-    let recommended_profile = if metal {
-        if ram_gb >= 24.0 {
-            "high-q5-vision".to_string()
-        } else if ram_gb >= 12.0 {
-            "balanced-q4".to_string()
-        } else {
-            "safe-q4-low-memory".to_string()
-        }
-    } else if ram_gb >= 24.0 && vram_gb.unwrap_or(0.0) >= 8.0 {
-        "high-q5-vision".to_string()
-    } else if ram_gb >= 12.0 {
-        "balanced-q4".to_string()
-    } else {
-        "safe-q4-low-memory".to_string()
-    };
+    let recommended_profile = profile_for(ram_gb, vram_gb, metal).to_string();
 
     // On Apple Silicon, Metal is the accelerator — AVX2 absence is not a blocker.
-    let vision_supported = if metal {
-        ram_gb >= 8.0
-    } else {
-        ram_gb >= 8.0 && avx2
-    };
+    let vision_supported = vision_supported_for(ram_gb, avx2, metal);
     if !vision_supported {
         warnings.push("المعالجة البصرية المحلية قد لا تكون مستقرة على هذا الجهاز.".into());
     }
@@ -160,6 +142,24 @@ fn cuda_supported() -> bool {
         .unwrap_or(false)
 }
 
+fn profile_for(ram_gb: f64, vram_gb: Option<f64>, metal: bool) -> &'static str {
+    if metal {
+        if ram_gb >= 24.0 { "high-q5-vision" }
+        else if ram_gb >= 12.0 { "balanced-q4" }
+        else { "safe-q4-low-memory" }
+    } else if ram_gb >= 24.0 && vram_gb.unwrap_or(0.0) >= 8.0 {
+        "high-q5-vision"
+    } else if ram_gb >= 12.0 {
+        "balanced-q4"
+    } else {
+        "safe-q4-low-memory"
+    }
+}
+
+fn vision_supported_for(ram_gb: f64, avx2: bool, metal: bool) -> bool {
+    if metal { ram_gb >= 8.0 } else { ram_gb >= 8.0 && avx2 }
+}
+
 fn hidden_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     #[cfg(windows)]
@@ -169,4 +169,109 @@ fn hidden_command(program: &str) -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── profile_for ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn profile_metal_high_ram_gives_high_q5() {
+        assert_eq!(profile_for(24.0, None, true), "high-q5-vision");
+    }
+
+    #[test]
+    fn profile_metal_exactly_24gb_boundary() {
+        assert_eq!(profile_for(24.0, None, true), "high-q5-vision");
+        assert_eq!(profile_for(23.9, None, true), "balanced-q4");
+    }
+
+    #[test]
+    fn profile_metal_medium_ram_gives_balanced() {
+        assert_eq!(profile_for(12.0, None, true), "balanced-q4");
+        assert_eq!(profile_for(16.0, None, true), "balanced-q4");
+    }
+
+    #[test]
+    fn profile_metal_exactly_12gb_boundary() {
+        assert_eq!(profile_for(12.0, None, true), "balanced-q4");
+        assert_eq!(profile_for(11.9, None, true), "safe-q4-low-memory");
+    }
+
+    #[test]
+    fn profile_metal_low_ram_gives_safe() {
+        assert_eq!(profile_for(4.0, None, true), "safe-q4-low-memory");
+        assert_eq!(profile_for(8.0, None, true), "safe-q4-low-memory");
+    }
+
+    #[test]
+    fn profile_non_metal_high_ram_high_vram_gives_high_q5() {
+        assert_eq!(profile_for(24.0, Some(8.0), false), "high-q5-vision");
+        assert_eq!(profile_for(32.0, Some(12.0), false), "high-q5-vision");
+    }
+
+    #[test]
+    fn profile_non_metal_high_ram_but_low_vram_falls_to_balanced() {
+        assert_eq!(profile_for(24.0, Some(4.0), false), "balanced-q4");
+        assert_eq!(profile_for(24.0, None, false), "balanced-q4");
+    }
+
+    #[test]
+    fn profile_non_metal_medium_ram_gives_balanced() {
+        assert_eq!(profile_for(16.0, Some(4.0), false), "balanced-q4");
+        assert_eq!(profile_for(12.0, None, false), "balanced-q4");
+    }
+
+    #[test]
+    fn profile_non_metal_low_ram_gives_safe() {
+        assert_eq!(profile_for(8.0, None, false), "safe-q4-low-memory");
+        assert_eq!(profile_for(4.0, None, false), "safe-q4-low-memory");
+    }
+
+    #[test]
+    fn profile_vram_exactly_8gb_boundary() {
+        assert_eq!(profile_for(24.0, Some(8.0), false), "high-q5-vision");
+        assert_eq!(profile_for(24.0, Some(7.9), false), "balanced-q4");
+    }
+
+    // ── vision_supported_for ────────────────────────────────────────────────────
+
+    #[test]
+    fn vision_metal_8gb_supported() {
+        assert!(vision_supported_for(8.0, false, true));
+        assert!(vision_supported_for(16.0, false, true));
+        assert!(vision_supported_for(32.0, false, true));
+    }
+
+    #[test]
+    fn vision_metal_below_8gb_not_supported() {
+        assert!(!vision_supported_for(7.9, false, true));
+        assert!(!vision_supported_for(4.0, false, true));
+    }
+
+    #[test]
+    fn vision_metal_exactly_8gb_boundary() {
+        assert!(vision_supported_for(8.0, false, true));
+        assert!(!vision_supported_for(7.99, false, true));
+    }
+
+    #[test]
+    fn vision_non_metal_avx2_8gb_supported() {
+        assert!(vision_supported_for(8.0, true, false));
+        assert!(vision_supported_for(16.0, true, false));
+    }
+
+    #[test]
+    fn vision_non_metal_no_avx2_not_supported_even_with_ram() {
+        assert!(!vision_supported_for(16.0, false, false));
+        assert!(!vision_supported_for(32.0, false, false));
+    }
+
+    #[test]
+    fn vision_non_metal_avx2_but_low_ram_not_supported() {
+        assert!(!vision_supported_for(4.0, true, false));
+        assert!(!vision_supported_for(7.9, true, false));
+    }
 }

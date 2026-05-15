@@ -1,0 +1,66 @@
+name: Rust Unit Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macOS arm64 (Apple Silicon)
+          - os: windows-latest
+            label: Windows x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Cache Cargo registry and build artifacts between runs
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-test-${{ matrix.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-test-${{ matrix.os }}-
+
+      # WebKit system libraries required to compile the tauri crate on Linux.
+      # macOS and Windows ship the required frameworks out of the box.
+      - name: Install system deps (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # ── Run all #[cfg(test)] modules ──────────────────────────────────────────
+      - name: Run unit tests
+        working-directory: src-tauri
+        run: cargo test --lib -- --test-output immediate 2>&1
+
+      # ── Summary matrix ────────────────────────────────────────────────────────
+      - name: Print test summary
+        if: always()
+        shell: bash
+        run: |
+          echo "=================================================="
+          echo "  TEST RESULTS — ${{ matrix.label }}"
+          echo "=================================================="
+          cd src-tauri
+          cargo test --lib -- --list 2>/dev/null | grep "^test " | wc -l | xargs -I{} echo "  Total tests listed: {}"
+          echo "=================================================="

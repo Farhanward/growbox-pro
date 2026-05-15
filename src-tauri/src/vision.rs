@@ -532,3 +532,157 @@ fn configure_no_window(cmd: &mut tokio::process::Command) {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // ── is_video ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_video_mp4() {
+        assert!(is_video(Path::new("clip.mp4")));
+    }
+
+    #[test]
+    fn is_video_mov() {
+        assert!(is_video(Path::new("screen.mov")));
+    }
+
+    #[test]
+    fn is_video_m4v() {
+        assert!(is_video(Path::new("movie.m4v")));
+    }
+
+    #[test]
+    fn is_video_webm() {
+        assert!(is_video(Path::new("video.webm")));
+    }
+
+    #[test]
+    fn is_video_mkv() {
+        assert!(is_video(Path::new("file.mkv")));
+    }
+
+    #[test]
+    fn is_video_uppercase_extension() {
+        assert!(is_video(Path::new("REEL.MP4")));
+        assert!(is_video(Path::new("CLIP.MOV")));
+    }
+
+    #[test]
+    fn is_video_mixed_case_extension() {
+        assert!(is_video(Path::new("reel.Mp4")));
+        assert!(is_video(Path::new("clip.MoV")));
+    }
+
+    #[test]
+    fn is_not_video_jpg() {
+        assert!(!is_video(Path::new("photo.jpg")));
+    }
+
+    #[test]
+    fn is_not_video_jpeg() {
+        assert!(!is_video(Path::new("photo.jpeg")));
+    }
+
+    #[test]
+    fn is_not_video_png() {
+        assert!(!is_video(Path::new("image.png")));
+    }
+
+    #[test]
+    fn is_not_video_gif() {
+        assert!(!is_video(Path::new("anim.gif")));
+    }
+
+    #[test]
+    fn is_not_video_heic() {
+        assert!(!is_video(Path::new("photo.heic")));
+    }
+
+    #[test]
+    fn is_not_video_no_extension() {
+        assert!(!is_video(Path::new("mediafile")));
+    }
+
+    #[test]
+    fn is_not_video_empty_path() {
+        assert!(!is_video(Path::new("")));
+    }
+
+    #[test]
+    fn is_video_full_path() {
+        assert!(is_video(Path::new("/Users/farhan/Downloads/reel.mp4")));
+        assert!(!is_video(Path::new("/Users/farhan/Downloads/photo.jpg")));
+    }
+
+    // ── clean_mtmd_output ───────────────────────────────────────────────────────
+
+    #[test]
+    fn clean_output_removes_llama_prefix_lines() {
+        let raw = "llama_model_load: loading model\nThis is a great photo.\nllama_kv_cache_init: 256 MiB\n";
+        let cleaned = clean_mtmd_output(raw);
+        assert!(!cleaned.contains("llama_"));
+        assert!(cleaned.contains("This is a great photo."));
+    }
+
+    #[test]
+    fn clean_output_removes_load_backend_lines() {
+        let raw = "load_backend: metal\nBeautiful sunset image.\n";
+        let cleaned = clean_mtmd_output(raw);
+        assert!(!cleaned.contains("load_backend:"));
+        assert!(cleaned.contains("Beautiful sunset image."));
+    }
+
+    #[test]
+    fn clean_output_removes_main_lines() {
+        let raw = "main: build = 1234\nA professional product photo.\nmain: seed = 42\n";
+        let cleaned = clean_mtmd_output(raw);
+        assert!(!cleaned.contains("main:"));
+        assert!(cleaned.contains("A professional product photo."));
+    }
+
+    #[test]
+    fn clean_output_keeps_real_content() {
+        let raw = "load_backend: metal\nllama_init: loading\nصورة منتج احترافية بإضاءة ناعمة.\nmain: done\n";
+        let cleaned = clean_mtmd_output(raw);
+        assert_eq!(cleaned.trim(), "صورة منتج احترافية بإضاءة ناعمة.");
+    }
+
+    #[test]
+    fn clean_output_trims_surrounding_whitespace() {
+        let raw = "\n\nllama_load: x\n\nGreat image description.\n\n";
+        let cleaned = clean_mtmd_output(raw);
+        assert_eq!(cleaned, "Great image description.");
+    }
+
+    #[test]
+    fn clean_output_removes_empty_lines() {
+        let raw = "line one\n\n\nline two\n\nline three";
+        let cleaned = clean_mtmd_output(raw);
+        assert_eq!(cleaned, "line one\nline two\nline three");
+    }
+
+    #[test]
+    fn clean_output_empty_input_returns_empty() {
+        assert_eq!(clean_mtmd_output(""), "");
+    }
+
+    #[test]
+    fn clean_output_all_noise_returns_empty() {
+        let raw = "llama_load: x\nload_backend: metal\nmain: seed=1\n";
+        assert_eq!(clean_mtmd_output(raw), "");
+    }
+
+    #[test]
+    fn clean_output_preserves_multiline_description() {
+        let raw = "main: start\nThe image shows a food platter.\nBright colors with warm lighting.\nFresh ingredients visible.\nmain: end\n";
+        let cleaned = clean_mtmd_output(raw);
+        assert!(cleaned.contains("The image shows a food platter."));
+        assert!(cleaned.contains("Bright colors with warm lighting."));
+        assert!(cleaned.contains("Fresh ingredients visible."));
+        assert!(!cleaned.contains("main:"));
+    }
+}

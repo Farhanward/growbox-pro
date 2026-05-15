@@ -10,6 +10,12 @@ pub struct PublishingAssistantInput {
     pub platform: String,
     pub media_path: Option<String>,
     pub media_note: String,
+    #[serde(default = "default_output_language")]
+    pub output_language: String,
+}
+
+fn default_output_language() -> String {
+    "ar".into()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -280,21 +286,37 @@ where
 
     on_stage("assistant", "صياغة كابشن المنصات بالنموذج المحلي…");
     let context = build_strategy_context(&input, &bundle, account_data.as_ref(), &allowed, &deterministic_time, rule);
-    let ai = llm::generate_publishing_assistant(&input.client, &input.platform, &context, &media_note, &allowed, &deterministic_time)
+    let ai = llm::generate_publishing_assistant(
+        &input.client,
+        &input.platform,
+        &context,
+        &media_note,
+        &allowed,
+        &deterministic_time,
+        &input.output_language,
+    )
         .await
         .ok()
         .and_then(|text| parse_ai_copy(&text));
 
-    let instagram_caption = ai
+    let instagram_caption = sanitize_caption(
+        ai
         .as_ref()
         .and_then(|x| x.instagram.as_ref())
         .and_then(|x| x.caption.clone())
-        .unwrap_or_else(|| fallback_caption("Instagram", &input, &selected_countries));
-    let tiktok_caption = ai
+        .unwrap_or_else(|| fallback_caption("Instagram", &input, &selected_countries)),
+        &input,
+        &selected_countries,
+    );
+    let tiktok_caption = sanitize_caption(
+        ai
         .as_ref()
         .and_then(|x| x.tiktok.as_ref())
         .and_then(|x| x.caption.clone())
-        .unwrap_or_else(|| fallback_caption("TikTok", &input, &selected_countries));
+        .unwrap_or_else(|| fallback_caption("TikTok", &input, &selected_countries)),
+        &input,
+        &selected_countries,
+    );
     let visual_note = ai
         .as_ref()
         .and_then(|x| x.visual_note.clone())
@@ -557,6 +579,15 @@ fn parse_ai_copy(text: &str) -> Option<AiCopy> {
 
 fn fallback_caption(_platform: &str, input: &PublishingAssistantInput, countries: &[&CountryRule]) -> String {
     let country_line = countries.iter().map(|c| c.label).collect::<Vec<_>>().join("، ");
+    if is_english_output(&input.output_language) {
+        return format!(
+            "{} | {} for {}.\n{}\nSave this post for later, and share it with someone planning the same moment.",
+            input.client.name,
+            input.client.niche,
+            country_line,
+            input.media_note.trim()
+        );
+    }
     format!(
         "{} | {} في {}.\n{}\nاكتبوا لنا رأيكم بالتعليقات، واحفظوا المنشور للرجوع له لاحقاً.",
         input.client.name,
@@ -564,6 +595,539 @@ fn fallback_caption(_platform: &str, input: &PublishingAssistantInput, countries
         country_line,
         input.media_note.trim()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input() -> PublishingAssistantInput {
+        PublishingAssistantInput {
+            client: ClientInput {
+                name: "لولوه دشتي".into(),
+                tiktok: None,
+                instagram: None,
+                snapchat: None,
+                niche: "تصوير".into(),
+                countries: vec!["KW".into()],
+                plan_days: 7,
+            },
+            platform: "instagram".into(),
+            media_path: None,
+            media_note: "استقبال مولود بديكور وردي وذهبي".into(),
+            output_language: "ar".into(),
+        }
+    }
+
+    #[test]
+    fn rejects_non_gulf_or_hallucinated_caption() {
+        let selected = selected_countries(&["KW".into()]);
+        let cleaned = sanitize_caption(
+            "😍 منظر فخم ده الـ Al Jouri Hotel في Dubai! Check out this place".into(),
+            &input(),
+            &selected,
+        );
+        assert!(!cleaned.contains("ده"));
+        assert!(!cleaned.to_ascii_lowercase().contains("dubai"));
+        assert!(cleaned.contains("استقبال مولود"));
+    }
+
+    #[test]
+    fn exact_model_card_limits_hashtags_to_eight_total() {
+        let selected = selected_countries(&["KW".into()]);
+        let rule = niche_rule("تصوير");
+        let allowed = vec![
+            "#a".into(), "#b".into(), "#c".into(), "#d".into(),
+            "#e".into(), "#f".into(), "#g".into(), "#h".into(), "#i".into(),
+        ];
+        let ai = AiCopy {
+            platform_info: Some(PlatformInfo { name: "instagram".into(), post_id: "x".into() }),
+            niche_context: None,
+            content_payload: Some(ContentPayload {
+                caption: "كابشن خليجي واضح".into(),
+                hashtags: HashtagGroups {
+                    velocity: allowed.clone(),
+                    relevance: allowed.clone(),
+                },
+            }),
+            strategy_insights: None,
+            virality_indicators: None,
+            summary: None,
+            success_score: None,
+            suggested_time: None,
+            instagram: None,
+            tiktok: None,
+            visual_note: None,
+            rationale: None,
+        };
+        let card = exact_model_card(
+            &ai,
+            &input(),
+            rule,
+            &selected,
+            &allowed,
+            80,
+            "8:30 مساء",
+            &ViralityIndicators {
+                hook_strength: "Medium".into(),
+                shareability_factor: "Medium".into(),
+                predicted_trend_alignment: "Rising".into(),
+                strategic_score: 60,
+            },
+        )
+        .expect("card");
+        let total = card.content_payload.hashtags.velocity.len()
+            + card.content_payload.hashtags.relevance.len();
+        assert_eq!(total, 8);
+    }
+
+    #[test]
+    fn english_output_keeps_english_caption() {
+        let selected = selected_countries(&["KW".into()]);
+        let mut english_input = input();
+        english_input.output_language = "en".into();
+        let cleaned = sanitize_caption(
+            "A soft baby reception setup with pink florals, warm lighting, and elegant Gulf event styling.".into(),
+            &english_input,
+            &selected,
+        );
+        assert!(cleaned.starts_with("A soft baby reception"));
+        assert!(!cleaned.contains("اكتبوا لنا"));
+    }
+
+    // ── is_english_output ───────────────────────────────────────────────────────
+
+    #[test]
+    fn is_english_en_true() {
+        assert!(is_english_output("en"));
+        assert!(is_english_output("EN"));
+        assert!(is_english_output("En"));
+    }
+
+    #[test]
+    fn is_english_english_word_true() {
+        assert!(is_english_output("english"));
+        assert!(is_english_output("ENGLISH"));
+    }
+
+    #[test]
+    fn is_english_ar_false() {
+        assert!(!is_english_output("ar"));
+        assert!(!is_english_output("ar-SA"));
+        assert!(!is_english_output(""));
+    }
+
+    // ── fallback_caption ────────────────────────────────────────────────────────
+
+    #[test]
+    fn fallback_caption_arabic_contains_arabic_cta() {
+        let selected = selected_countries(&["SA".into()]);
+        let cap = fallback_caption("instagram", &input(), &selected);
+        assert!(cap.contains("اكتبوا لنا") || cap.contains("احفظوا"));
+    }
+
+    #[test]
+    fn fallback_caption_english_mode_contains_english_cta() {
+        let selected = selected_countries(&["SA".into()]);
+        let mut en_input = input();
+        en_input.output_language = "en".into();
+        let cap = fallback_caption("instagram", &en_input, &selected);
+        assert!(cap.to_ascii_lowercase().contains("save this post") || cap.to_ascii_lowercase().contains("share"));
+    }
+
+    #[test]
+    fn fallback_caption_includes_client_name() {
+        let selected = selected_countries(&["KW".into()]);
+        let cap = fallback_caption("instagram", &input(), &selected);
+        assert!(cap.contains("لولوه دشتي"));
+    }
+
+    #[test]
+    fn fallback_caption_includes_country_label() {
+        let selected = selected_countries(&["KW".into()]);
+        let cap = fallback_caption("instagram", &input(), &selected);
+        assert!(cap.contains("الكويت"));
+    }
+
+    // ── sanitize_caption ────────────────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_arabic_blocks_too_many_english_letters() {
+        let selected = selected_countries(&["KW".into()]);
+        let long_english = "This is a very long English caption with many words here today".into();
+        let cleaned = sanitize_caption(long_english, &input(), &selected);
+        assert!(cleaned.contains("استقبال مولود"));
+    }
+
+    #[test]
+    fn sanitize_arabic_allows_short_english_brand_names() {
+        let selected = selected_countries(&["KW".into()]);
+        let caption = "لولوه دشتي | تصوير في الكويت. @studio 2024".into();
+        let cleaned = sanitize_caption(caption, &input(), &selected);
+        assert!(cleaned.contains("لولوه دشتي"));
+    }
+
+    #[test]
+    fn sanitize_arabic_blocks_check_out() {
+        let selected = selected_countries(&["KW".into()]);
+        let cap = "منظر رائع check out this place in Kuwait.".into();
+        let cleaned = sanitize_caption(cap, &input(), &selected);
+        assert!(cleaned.contains("استقبال مولود"));
+    }
+
+    #[test]
+    fn sanitize_arabic_blocks_egyptian_dialect_de() {
+        let selected = selected_countries(&["KW".into()]);
+        let cap = "شوف ده الجو في الكويت يا جماعة".into();
+        let cleaned = sanitize_caption(cap, &input(), &selected);
+        assert!(cleaned.contains("استقبال مولود"));
+    }
+
+    #[test]
+    fn sanitize_arabic_blocks_dubai_hallucination() {
+        let selected = selected_countries(&["KW".into()]);
+        let cap = "هذا المكان في dubai رائع جداً اليوم".into();
+        let cleaned = sanitize_caption(cap, &input(), &selected);
+        assert!(cleaned.contains("استقبال مولود"));
+    }
+
+    #[test]
+    fn sanitize_english_mode_blocks_egyptian_dialect() {
+        let selected = selected_countries(&["KW".into()]);
+        let mut en_input = input();
+        en_input.output_language = "en".into();
+        let cap = "Beautiful setup ده في الكويت today".into();
+        let cleaned = sanitize_caption(cap, &en_input, &selected);
+        assert!(cleaned.contains("استقبال مولود") || cleaned.to_ascii_lowercase().contains("save this post"));
+    }
+
+    #[test]
+    fn sanitize_english_mode_keeps_clean_english() {
+        let selected = selected_countries(&["KW".into()]);
+        let mut en_input = input();
+        en_input.output_language = "en".into();
+        let cap = "Beautiful baby shower with pink florals and golden accents.".into();
+        let cleaned = sanitize_caption(cap, &en_input, &selected);
+        assert!(cleaned.starts_with("Beautiful baby shower"));
+    }
+
+    // ── selected_countries ──────────────────────────────────────────────────────
+
+    #[test]
+    fn selected_countries_empty_falls_back_to_sa() {
+        let countries = selected_countries(&[]);
+        assert_eq!(countries.len(), 1);
+        assert_eq!(countries[0].code, "SA");
+    }
+
+    #[test]
+    fn selected_countries_unknown_code_falls_back_to_sa() {
+        let countries = selected_countries(&["XX".into(), "ZZ".into()]);
+        assert_eq!(countries.len(), 1);
+        assert_eq!(countries[0].code, "SA");
+    }
+
+    #[test]
+    fn selected_countries_single_valid() {
+        let countries = selected_countries(&["AE".into()]);
+        assert_eq!(countries.len(), 1);
+        assert_eq!(countries[0].code, "AE");
+    }
+
+    #[test]
+    fn selected_countries_multiple_valid() {
+        let countries = selected_countries(&["KW".into(), "AE".into(), "SA".into()]);
+        assert_eq!(countries.len(), 3);
+        let codes: Vec<&str> = countries.iter().map(|c| c.code).collect();
+        assert!(codes.contains(&"KW"));
+        assert!(codes.contains(&"AE"));
+        assert!(codes.contains(&"SA"));
+    }
+
+    #[test]
+    fn selected_countries_all_six_gulf() {
+        let codes = vec!["SA".into(), "AE".into(), "KW".into(), "QA".into(), "BH".into(), "OM".into()];
+        let countries = selected_countries(&codes);
+        assert_eq!(countries.len(), 6);
+    }
+
+    #[test]
+    fn selected_countries_mixed_valid_invalid() {
+        let countries = selected_countries(&["KW".into(), "INVALID".into()]);
+        assert_eq!(countries.len(), 1);
+        assert_eq!(countries[0].code, "KW");
+    }
+
+    // ── niche_rule ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn niche_rule_photography_aliases() {
+        assert_eq!(niche_rule("مصور").canonical, "تصوير");
+        assert_eq!(niche_rule("مصور فوتوغرافي").canonical, "تصوير");
+        assert_eq!(niche_rule("استوديو تصوير").canonical, "تصوير");
+    }
+
+    #[test]
+    fn niche_rule_food_aliases() {
+        assert_eq!(niche_rule("مطعم").canonical, "طعام");
+        assert_eq!(niche_rule("كافيه").canonical, "طعام");
+        assert_eq!(niche_rule("مقهى").canonical, "طعام");
+        assert_eq!(niche_rule("حلويات").canonical, "طعام");
+    }
+
+    #[test]
+    fn niche_rule_fashion_aliases() {
+        assert_eq!(niche_rule("متجر ملابس").canonical, "موضة");
+        assert_eq!(niche_rule("عبايات").canonical, "موضة");
+        assert_eq!(niche_rule("أزياء").canonical, "موضة");
+        assert_eq!(niche_rule("فاشن").canonical, "موضة");
+    }
+
+    #[test]
+    fn niche_rule_direct_canonical_passthrough() {
+        assert_eq!(niche_rule("تصوير").canonical, "تصوير");
+        assert_eq!(niche_rule("طعام").canonical, "طعام");
+        assert_eq!(niche_rule("رياضة").canonical, "رياضة");
+        assert_eq!(niche_rule("تعليم").canonical, "تعليم");
+        assert_eq!(niche_rule("ألعاب").canonical, "ألعاب");
+        assert_eq!(niche_rule("سفر").canonical, "سفر");
+        assert_eq!(niche_rule("تجميل").canonical, "تجميل");
+    }
+
+    #[test]
+    fn niche_rule_unknown_falls_back_to_first_niche() {
+        let rule = niche_rule("شيء غريب");
+        assert_eq!(rule.canonical, NICHES[0].canonical);
+    }
+
+    // ── best_time ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn best_time_instagram_weekday_sa_uses_slot_0() {
+        let countries = selected_countries(&["SA".into()]);
+        let time = best_time("instagram", &countries, false);
+        assert_eq!(time, "20:45");
+    }
+
+    #[test]
+    fn best_time_tiktok_weekday_sa_uses_slot_1() {
+        let countries = selected_countries(&["SA".into()]);
+        let time = best_time("tiktok", &countries, false);
+        assert_eq!(time, "21:30");
+    }
+
+    #[test]
+    fn best_time_instagram_weekend_sa_uses_slot_0() {
+        let countries = selected_countries(&["SA".into()]);
+        let time = best_time("instagram", &countries, true);
+        assert_eq!(time, "16:30");
+    }
+
+    #[test]
+    fn best_time_tiktok_weekend_sa_uses_slot_1() {
+        let countries = selected_countries(&["SA".into()]);
+        let time = best_time("tiktok", &countries, true);
+        assert_eq!(time, "21:15");
+    }
+
+    #[test]
+    fn best_time_returns_valid_time_format() {
+        let countries = selected_countries(&["AE".into()]);
+        let time = best_time("instagram", &countries, false);
+        let parts: Vec<&str> = time.split(':').collect();
+        assert_eq!(parts.len(), 2);
+        let hour: u8 = parts[0].parse().expect("hour must be numeric");
+        let minute: u8 = parts[1].parse().expect("minute must be numeric");
+        assert!(hour < 24);
+        assert!(minute < 60);
+    }
+
+    // ── success_score ───────────────────────────────────────────────────────────
+
+    fn empty_bundle() -> crate::insights::InsightBundle {
+        crate::insights::InsightBundle {
+            client_profiles: vec![],
+            competitor_handles: vec![],
+            trending_hashtags: vec![],
+            best_times_weekday: vec![],
+            best_times_weekend: vec![],
+        }
+    }
+
+    fn snapshot(platform: &str) -> crate::insights::AccountSnapshot {
+        crate::insights::AccountSnapshot {
+            platform: platform.into(),
+            handle: None,
+            summary: "حساب تجريبي".into(),
+            source: "test".into(),
+        }
+    }
+
+    #[test]
+    fn success_score_minimum_base_is_45() {
+        let scored: Vec<ScoredHashtag> = vec![];
+        let score = success_score(&input(), &empty_bundle(), &scored, false);
+        assert!(score >= 45, "base score should be at least 45, got {score}");
+    }
+
+    #[test]
+    fn success_score_increases_with_more_hashtags() {
+        let bundle_full = crate::insights::InsightBundle {
+            client_profiles: vec![snapshot("instagram")],
+            competitor_handles: vec!["منافس1".into()],
+            trending_hashtags: vec![],
+            best_times_weekday: vec![],
+            best_times_weekend: vec![],
+        };
+        let no_tags: Vec<ScoredHashtag> = vec![];
+        let with_tags: Vec<ScoredHashtag> = (0..10).map(|i| ScoredHashtag {
+            tag: format!("#tag{i}"),
+            velocity: 70,
+            relevance: 70,
+            reason: "test".into(),
+        }).collect();
+        let score_low = success_score(&input(), &empty_bundle(), &no_tags, false);
+        let score_high = success_score(&input(), &bundle_full, &with_tags, true);
+        assert!(score_high > score_low, "richer input should produce higher score");
+    }
+
+    #[test]
+    fn success_score_clamps_to_100() {
+        let bundle = crate::insights::InsightBundle {
+            client_profiles: vec![snapshot("instagram"), snapshot("tiktok")],
+            competitor_handles: vec!["c".into()],
+            trending_hashtags: vec![],
+            best_times_weekday: vec![],
+            best_times_weekend: vec![],
+        };
+        let many_tags: Vec<ScoredHashtag> = (0..20).map(|i| ScoredHashtag {
+            tag: format!("#tag{i}"),
+            velocity: 99,
+            relevance: 99,
+            reason: "test".into(),
+        }).collect();
+        let mut rich = input();
+        rich.media_note = "وصف طويل جداً للمنشور يحتوي على تفاصيل كثيرة ومميزة تجعله أفضل للتحليل والنشر.".into();
+        let score = success_score(&rich, &bundle, &many_tags, true);
+        assert!(score <= 100, "score must never exceed 100, got {score}");
+    }
+
+    // ── rank_hashtags ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn rank_hashtags_no_duplicates() {
+        let rule = niche_rule("تصوير");
+        let countries = selected_countries(&["SA".into()]);
+        let source = vec!["#تصوير_احترافي".into(), "#تصوير_احترافي".into(), "#مصورين_الخليج".into()];
+        let scored = rank_hashtags(&source, rule, &countries);
+        let tags: Vec<&str> = scored.iter().map(|h| h.tag.as_str()).collect();
+        let unique: std::collections::HashSet<&&str> = tags.iter().collect();
+        assert_eq!(tags.len(), unique.len(), "duplicate tags found");
+    }
+
+    #[test]
+    fn rank_hashtags_blocked_terms_excluded() {
+        let rule = niche_rule("تصوير");
+        let countries = selected_countries(&["SA".into()]);
+        let source = vec!["#طبخ_يومي".into(), "#مطاعم_الرياض".into(), "#تصوير_منتجات".into()];
+        let scored = rank_hashtags(&source, rule, &countries);
+        assert!(!scored.iter().any(|h| h.tag.contains("طبخ") || h.tag.contains("مطاعم")));
+        assert!(scored.iter().any(|h| h.tag.contains("تصوير")));
+    }
+
+    #[test]
+    fn rank_hashtags_max_20_results() {
+        let rule = niche_rule("تصوير");
+        let countries = selected_countries(&["SA".into()]);
+        let source: Vec<String> = (0..50).map(|i| format!("#تصوير_tag{i}")).collect();
+        let scored = rank_hashtags(&source, rule, &countries);
+        assert!(scored.len() <= 20, "should truncate to 20 max, got {}", scored.len());
+    }
+
+    #[test]
+    fn rank_hashtags_country_match_boosts_score() {
+        let rule = niche_rule("تصوير");
+        let countries = selected_countries(&["SA".into()]);
+        let source = vec!["#تصوير_السعودية".into(), "#تصوير_عام".into()];
+        let scored = rank_hashtags(&source, rule, &countries);
+        if let (Some(sa_tag), Some(gen_tag)) = (
+            scored.iter().find(|h| h.tag.contains("السعودية")),
+            scored.iter().find(|h| h.tag.contains("عام")),
+        ) {
+            assert!(sa_tag.velocity >= gen_tag.velocity, "geo match should boost velocity");
+        }
+    }
+
+    // ── geo_profile ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn geo_profile_primary_country_is_first() {
+        let countries = selected_countries(&["AE".into(), "KW".into()]);
+        let profile = geo_profile(&countries);
+        assert_eq!(profile.primary_country, "الإمارات");
+    }
+
+    #[test]
+    fn geo_profile_timezone_matches_country() {
+        let countries = selected_countries(&["SA".into()]);
+        let profile = geo_profile(&countries);
+        assert_eq!(profile.timezone, "Asia/Riyadh");
+    }
+
+    #[test]
+    fn geo_profile_locale_matches_country() {
+        let countries = selected_countries(&["AE".into()]);
+        let profile = geo_profile(&countries);
+        assert_eq!(profile.locale, "ar-AE");
+    }
+
+    #[test]
+    fn geo_profile_countries_list_matches_input() {
+        let countries = selected_countries(&["KW".into(), "QA".into()]);
+        let profile = geo_profile(&countries);
+        assert_eq!(profile.countries.len(), 2);
+        assert!(profile.countries.contains(&"الكويت".to_string()));
+        assert!(profile.countries.contains(&"قطر".to_string()));
+    }
+}
+
+fn sanitize_caption(
+    caption: String,
+    input: &PublishingAssistantInput,
+    countries: &[&CountryRule],
+) -> String {
+    let lower = caption.to_ascii_lowercase();
+    if is_english_output(&input.output_language) {
+        let egyptian_arabic = ["ده ", " دي ", "بتاع", "أوي", "اوي", "عشان كده", "تستعديش"];
+        if egyptian_arabic.iter().any(|word| lower.contains(&word.to_ascii_lowercase())) {
+            return fallback_caption(&input.platform, input, countries);
+        }
+        return caption.trim().to_string();
+    }
+    let blocked = [
+        "مكتوب بالإنجليزية",
+        "check out",
+        "ده ",
+        " دي ",
+        "بتاع",
+        "أوي",
+        "اوي",
+        "عشان كده",
+        "تستعديش",
+        "ده الـ",
+        "al jouri",
+        "dubai",
+    ];
+    let has_blocked = blocked.iter().any(|word| lower.contains(&word.to_ascii_lowercase()));
+    let english_letters = caption.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    if has_blocked || english_letters > 24 {
+        return fallback_caption(&input.platform, input, countries);
+    }
+    caption.trim().to_string()
+}
+
+fn is_english_output(language: &str) -> bool {
+    language.trim().eq_ignore_ascii_case("en") || language.trim().eq_ignore_ascii_case("english")
 }
 
 fn default_rationale(rule: &NicheRule, countries: &[&CountryRule], has_account_data: bool) -> Vec<String> {
@@ -653,15 +1217,20 @@ fn exact_model_card(
             .map(|value| normalize_virality_indicators(value, fallback_virality))
             .unwrap_or_else(|| fallback_virality.clone()),
     };
+    card.content_payload.caption = sanitize_caption(
+        card.content_payload.caption,
+        input,
+        countries,
+    );
     card.content_payload.hashtags.velocity = sanitize_model_tags(
         Some(card.content_payload.hashtags.velocity.clone()),
         allowed,
-        8,
+        4,
     );
     card.content_payload.hashtags.relevance = sanitize_model_tags(
         Some(card.content_payload.hashtags.relevance.clone()),
         allowed,
-        8,
+        4,
     );
     card.strategy_insights.success_score = card.strategy_insights.success_score.clamp(1, 100);
     Some(card)
@@ -701,8 +1270,8 @@ fn build_cards(
             content_payload: ContentPayload {
                 caption: preview.caption.clone(),
                 hashtags: HashtagGroups {
-                    velocity: top_tags_by(scored, |tag| tag.velocity, 8),
-                    relevance: top_tags_by(scored, |tag| tag.relevance, 8),
+                    velocity: top_tags_by(scored, |tag| tag.velocity, 4),
+                    relevance: top_tags_by(scored, |tag| tag.relevance, 4),
                 },
             },
             strategy_insights: StrategyInsights {
@@ -858,22 +1427,31 @@ where
         &media_note,
         &allowed,
         &deterministic_time,
+        &input.output_language,
     )
     .await
     .ok()
     .and_then(|text| parse_ai_copy(&text));
 
     // Reuse the same assembly logic as `analyze`.
-    let instagram_caption = ai
+    let instagram_caption = sanitize_caption(
+        ai
         .as_ref()
         .and_then(|x| x.instagram.as_ref())
         .and_then(|x| x.caption.clone())
-        .unwrap_or_else(|| fallback_caption("Instagram", &input, &selected_countries));
-    let tiktok_caption = ai
+        .unwrap_or_else(|| fallback_caption("Instagram", &input, &selected_countries)),
+        &input,
+        &selected_countries,
+    );
+    let tiktok_caption = sanitize_caption(
+        ai
         .as_ref()
         .and_then(|x| x.tiktok.as_ref())
         .and_then(|x| x.caption.clone())
-        .unwrap_or_else(|| fallback_caption("TikTok", &input, &selected_countries));
+        .unwrap_or_else(|| fallback_caption("TikTok", &input, &selected_countries)),
+        &input,
+        &selected_countries,
+    );
     let visual_note = ai
         .as_ref()
         .and_then(|x| x.visual_note.clone())

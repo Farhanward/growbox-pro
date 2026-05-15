@@ -306,8 +306,11 @@ pub async fn generate_report(input: &ClientInput, context: &str) -> Result<Strin
     chat(system, user, 2200).await
 }
 
-pub async fn generate_post_draft(input: &ClientInput, context: &str, media_note: &str) -> Result<String> {
-    let dialect_hint = if input.countries.iter().any(|c| c == "KW") {
+pub async fn generate_post_draft(input: &ClientInput, context: &str, media_note: &str, output_language: &str) -> Result<String> {
+    let english_output = is_english_output(output_language);
+    let dialect_hint = if english_output {
+        "Write the final post in English only. Do not include Arabic copy unless it is a hashtag already provided in the context."
+    } else if input.countries.iter().any(|c| c == "KW") {
         "اكتب بلهجة كويتية ودودة ومفهومة فقط، بدون فصحى رسمية."
     } else if input.countries.iter().any(|c| c == "SA") {
         "اكتب بلهجة سعودية خليجية مفهومة ومهنية فقط، بدون فصحى رسمية."
@@ -317,24 +320,47 @@ pub async fn generate_post_draft(input: &ClientInput, context: &str, media_note:
     let system = format!(
         "أنت كاتب محتوى وتسويق سوشيال ميديا. مهمتك تجهيز بوست فقط للنشر اليدوي. \
          ممنوع أن تقول إنك ستنشر أو ترفع المحتوى. لا تختلق أرقامًا. \
-         ممنوع استخدام الفصحى الرسمية في الكابشن؛ استخدم لهجة خليجية طبيعية تصلح للنشر. {}",
+         إذا كانت اللغة إنجليزية فاكتب البوست بالإنجليزية. إذا كانت عربية فاستخدم لهجة خليجية طبيعية فقط. \
+         ممنوع اللهجة المصرية وممنوع اختراع مدينة أو فندق أو علامة تجارية غير مذكورة في السياق. {}",
         dialect_hint
     );
-    let user = format!(
-        "بيانات الحساب والتحليل:\n{}\n\n\
-         وصف الصورة أو الفيديو من العميل:\n{}\n\n\
-         جهز بوست نهائي بصيغة Markdown يحتوي فقط على:\n\
+    let template = if english_output {
+        "Prepare the final post in Markdown with only these sections:\n\
+         ## Ready Caption\n\
+         One copy-ready English caption.\n\n\
+         ## Hashtags\n\
+         5 to 8 strong hashtags only. No hashtag stuffing.\n\n\
+         ## Suggested Posting Time\n\
+         One or two times maximum based on the data.\n\n\
+         ## Notes Before Publishing\n\
+         3 short notes to improve the media, first two seconds, or call to action."
+    } else {
+        "جهز بوست نهائي بصيغة Markdown يحتوي فقط على:\n\
          ## الكابشن الجاهز\n\
          نص واحد جاهز للنسخ بلهجة خليجية فقط.\n\n\
          ## الهاشتاقات\n\
-         15 إلى 20 هاشتاق مناسبة.\n\n\
+         5 إلى 8 هاشتاقات فقط، منتقاة من الأقوى والأقرب للمحتوى. ممنوع حشو هاشتاقات عامة.\n\n\
          ## وقت النشر المقترح\n\
          وقت واحد أو وقتين كحد أقصى حسب البيانات.\n\n\
          ## ملاحظات للعميل قبل النشر\n\
-         3 ملاحظات قصيرة لتحسين الصورة/الفيديو أو أول ثانيتين أو الدعوة للتفاعل.\n\n\
-         لا تضف تقريرًا طويلًا ولا خطة أسبوعية.",
+         3 ملاحظات قصيرة لتحسين الصورة/الفيديو أو أول ثانيتين أو الدعوة للتفاعل."
+    };
+    let final_rules = if english_output {
+        "Do not add Arabic marketing copy. Do not mention any city, hotel, or brand unless it is explicitly present in the media description or context. Do not add a long report or weekly plan."
+    } else {
+        "لا تكتب بالإنجليزية. لا تذكر مدينة أو فندقاً أو علامة تجارية غير موجودة صراحة في وصف الوسائط أو السياق. \
+         ممنوع اللهجة المصرية مثل: ده، دي، بتاع، أوي، عشان كده، تستعديش. \
+         لا تضف تقريرًا طويلًا ولا خطة أسبوعية."
+    };
+    let user = format!(
+        "بيانات الحساب والتحليل:\n{}\n\n\
+         وصف الصورة أو الفيديو من العميل:\n{}\n\n\
+         {}\n\n\
+         {}",
         context,
-        media_note.trim()
+        media_note.trim(),
+        template,
+        final_rules
     );
     chat(system, user, 900).await
 }
@@ -369,13 +395,17 @@ pub async fn generate_publishing_assistant(
     media_note: &str,
     allowed_hashtags: &[String],
     suggested_time: &str,
+    output_language: &str,
 ) -> Result<String> {
-    let dialect_hint = if input.countries.iter().any(|c| c == "KW") {
-        "اكتب الكابشن بلهجة كويتية مهنية وخفيفة فقط، وممنوع الفصحى الرسمية."
+    let english_output = is_english_output(output_language);
+    let language_rule = if english_output {
+        "All user-facing post copy, captions, summaries, rationale, cards, and guardrails must be in clear English. Do not write Arabic captions when output_language is en."
+    } else if input.countries.iter().any(|c| c == "KW") {
+        "اكتب الكابشن وكل النصوص التسويقية العربية بلهجة كويتية مهنية وخفيفة فقط، وممنوع الفصحى الرسمية أو اللهجة المصرية."
     } else if input.countries.iter().any(|c| c == "SA") {
-        "اكتب الكابشن بلهجة سعودية خليجية مهنية وواضحة فقط، وممنوع الفصحى الرسمية."
+        "اكتب الكابشن وكل النصوص التسويقية العربية بلهجة سعودية خليجية مهنية وواضحة فقط، وممنوع الفصحى الرسمية أو اللهجة المصرية."
     } else {
-        "اكتب الكابشن بعربي خليجي مفهوم فقط، وممنوع الفصحى الرسمية."
+        "اكتب الكابشن وكل النصوص التسويقية العربية بعربي خليجي مفهوم فقط، وممنوع الفصحى الرسمية أو اللهجة المصرية."
     };
     let target_region = if input.countries.iter().any(|c| c == "SA") {
         "Saudi Arabia"
@@ -387,7 +417,8 @@ pub async fn generate_publishing_assistant(
          مهمتك اقتراح استراتيجية قبل النشر بصيغة JSON فقط، وليس تنفيذ النشر. \
          اعمل كمحرك مطابقة وتحليل ساكن Static Analysis Mapping، وليس كمحرك تخمين. \
          اربط وصف المحتوى والسياق والوسوم المسموحة بأنماط أداء ناجحة في المنطقة، ولا تستنتج حدثاً أو ترنداً غير موجود في البيانات المدخلة. \
-         الكابشن يجب أن يكون باللهجة الخليجية فقط؛ ممنوع الأسلوب الفصيح الرسمي داخل content_payload.caption. \
+         إذا كانت output_language=en فاكتب البوست بالإنجليزية. إذا كانت output_language=ar فاكتب البوست بالعربية الخليجية فقط. \
+         ممنوع اللهجة المصرية في العربية: ده، دي، بتاع، أوي، تستعديش. ممنوع اختراع مدينة أو فندق أو علامة تجارية غير موجودة صراحة في وصف Vision أو السياق. \
          استخدم فقط الهاشتاقات الموجودة في allowed_hashtags، ولا تضف ترندات خارج النيتش أو الدول المحددة. \
          عند استخراج virality_indicators التزم بالآتي: \
          hook_strength يطابق الجملة الأولى أو العناصر المرئية الموصوفة مع الفضول المعرفي، حل المشكلة الفوري، أو الوعد بالقيمة؛ لا تستخدم High إلا عند وجود لهجة محلية قوية أو حاجة ملحة في السوق السعودي. \
@@ -395,10 +426,11 @@ pub async fn generate_publishing_assistant(
          predicted_trend_alignment يطابق الكلمات المفتاحية مع موجات السعودية والخليج مثل رؤية 2030، التحول التقني، والفعاليات الموسمية في الرياض/جدة؛ استخدم Peaking فقط إذا ظهر دليل صريح على حدث جارٍ الآن في المنطقة المستهدفة. \
          إذا لم تجد دليلاً منطقياً على القوة، استخدم Medium أو Low ولا ترفع التقييم. \
          ممنوع Markdown، ممنوع شرح خارج JSON، وممنوع نص قبل أو بعد الكائن. {}",
-        dialect_hint
+        language_rule
     );
     let user = format!(
         "target_region: {}\n\
+         output_language: {}\n\
          analysis_mode: Evidence Based Strategy Mapping\n\n\
          السياق المحلي:\n{}\n\n\
          وصف الوسائط:\n{}\n\n\
@@ -425,10 +457,12 @@ pub async fn generate_publishing_assistant(
            }}\
          }}\n\n\
          يجب أن تبني reasoning وsuccess_score على الأدلة الرقمية الموجودة في السياق: إحصاءات المنشور الفعلية ومنشورات المنافسين إن وجدت. \
+         إذا كانت output_language=en فاكتب caption وsummary وreasoning وvisual_note بالإنجليزية. إذا كانت ar فاكتبها بالعربية الخليجية فقط. \
          إذا لم توجد أرقام كافية، اخفض success_score واذكر في reasoning أن الدليل الرقمي ناقص. \
          strategic_score تحسبه طبقة Rust نهائياً من الأوزان 45% Hook و35% Shareability و20% Trend، لذلك أعده كرقم فقط ولا تشرح المعادلة. \
          لا تستخدم أي هاشتاق غير موجود في allowed_hashtags. لا تضع شرحاً خارج JSON.",
         target_region,
+        if english_output { "en" } else { "ar" },
         context,
         media_note.trim(),
         allowed_hashtags.join(" "),
@@ -440,4 +474,240 @@ pub async fn generate_publishing_assistant(
     );
 
     chat_json(system, user, 850).await
+}
+
+fn is_english_output(language: &str) -> bool {
+    language.trim().eq_ignore_ascii_case("en") || language.trim().eq_ignore_ascii_case("english")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_english_output ───────────────────────────────────────────────────────
+
+    #[test]
+    fn english_output_en_lowercase() {
+        assert!(is_english_output("en"));
+    }
+
+    #[test]
+    fn english_output_en_uppercase() {
+        assert!(is_english_output("EN"));
+    }
+
+    #[test]
+    fn english_output_en_mixed_case() {
+        assert!(is_english_output("En"));
+    }
+
+    #[test]
+    fn english_output_english_word() {
+        assert!(is_english_output("english"));
+    }
+
+    #[test]
+    fn english_output_english_uppercase() {
+        assert!(is_english_output("ENGLISH"));
+    }
+
+    #[test]
+    fn english_output_en_with_whitespace() {
+        assert!(is_english_output("  en  "));
+    }
+
+    #[test]
+    fn english_output_ar_returns_false() {
+        assert!(!is_english_output("ar"));
+    }
+
+    #[test]
+    fn english_output_arabic_locale_returns_false() {
+        assert!(!is_english_output("ar-SA"));
+    }
+
+    #[test]
+    fn english_output_empty_returns_false() {
+        assert!(!is_english_output(""));
+    }
+
+    #[test]
+    fn english_output_random_string_returns_false() {
+        assert!(!is_english_output("fr"));
+        assert!(!is_english_output("de"));
+        assert!(!is_english_output("العربية"));
+    }
+
+    // ── virality_level_score ────────────────────────────────────────────────────
+
+    #[test]
+    fn virality_high_scores_100() {
+        assert_eq!(virality_level_score("High"), 100);
+        assert_eq!(virality_level_score("high"), 100);
+        assert_eq!(virality_level_score("HIGH"), 100);
+    }
+
+    #[test]
+    fn virality_top_10_scores_100() {
+        assert_eq!(virality_level_score("Top 10%"), 100);
+        assert_eq!(virality_level_score("top 10%"), 100);
+    }
+
+    #[test]
+    fn virality_medium_scores_60() {
+        assert_eq!(virality_level_score("Medium"), 60);
+        assert_eq!(virality_level_score("medium"), 60);
+    }
+
+    #[test]
+    fn virality_top_25_scores_60() {
+        assert_eq!(virality_level_score("Top 25%"), 60);
+    }
+
+    #[test]
+    fn virality_top_40_scores_60() {
+        assert_eq!(virality_level_score("Top 40%"), 60);
+    }
+
+    #[test]
+    fn virality_low_scores_30() {
+        assert_eq!(virality_level_score("Low"), 30);
+        assert_eq!(virality_level_score("low"), 30);
+    }
+
+    #[test]
+    fn virality_needs_work_scores_30() {
+        assert_eq!(virality_level_score("Needs Work"), 30);
+        assert_eq!(virality_level_score("needs work"), 30);
+    }
+
+    #[test]
+    fn virality_unknown_falls_back_to_30() {
+        assert_eq!(virality_level_score("unknown"), 30);
+        assert_eq!(virality_level_score(""), 30);
+        assert_eq!(virality_level_score("garbage"), 30);
+    }
+
+    // ── trend_alignment_score ───────────────────────────────────────────────────
+
+    #[test]
+    fn trend_peaking_scores_100() {
+        assert_eq!(trend_alignment_score("Peaking"), 100);
+        assert_eq!(trend_alignment_score("peaking"), 100);
+    }
+
+    #[test]
+    fn trend_high_scores_100() {
+        assert_eq!(trend_alignment_score("High"), 100);
+    }
+
+    #[test]
+    fn trend_emerging_scores_80() {
+        assert_eq!(trend_alignment_score("Emerging"), 80);
+        assert_eq!(trend_alignment_score("emerging"), 80);
+    }
+
+    #[test]
+    fn trend_rising_scores_60() {
+        assert_eq!(trend_alignment_score("Rising"), 60);
+        assert_eq!(trend_alignment_score("rising"), 60);
+    }
+
+    #[test]
+    fn trend_medium_scores_60() {
+        assert_eq!(trend_alignment_score("Medium"), 60);
+    }
+
+    #[test]
+    fn trend_stable_scores_30() {
+        assert_eq!(trend_alignment_score("Stable"), 30);
+        assert_eq!(trend_alignment_score("stable"), 30);
+    }
+
+    #[test]
+    fn trend_low_scores_30() {
+        assert_eq!(trend_alignment_score("Low"), 30);
+    }
+
+    #[test]
+    fn trend_unknown_falls_back_to_30() {
+        assert_eq!(trend_alignment_score("Viral"), 30);
+        assert_eq!(trend_alignment_score(""), 30);
+    }
+
+    // ── calculate_strategic_score ───────────────────────────────────────────────
+
+    #[test]
+    fn strategic_score_all_max() {
+        // hook=100*0.45 + share=100*0.35 + trend=100*0.20 = 100
+        assert_eq!(calculate_strategic_score("High", "High", "Peaking"), 100);
+    }
+
+    #[test]
+    fn strategic_score_all_min() {
+        // hook=30*0.45 + share=30*0.35 + trend=30*0.20 = 13.5+10.5+6 = 30
+        assert_eq!(calculate_strategic_score("Low", "Low", "Stable"), 30);
+    }
+
+    #[test]
+    fn strategic_score_all_medium() {
+        // hook=60*0.45 + share=60*0.35 + trend=60*0.20 = 27+21+12 = 60
+        assert_eq!(calculate_strategic_score("Medium", "Medium", "Rising"), 60);
+    }
+
+    #[test]
+    fn strategic_score_high_medium_rising() {
+        // hook=100*0.45 + share=60*0.35 + trend=60*0.20 = 45+21+12 = 78
+        assert_eq!(calculate_strategic_score("High", "Medium", "Rising"), 78);
+    }
+
+    #[test]
+    fn strategic_score_high_medium_emerging() {
+        // hook=100*0.45 + share=60*0.35 + trend=80*0.20 = 45+21+16 = 82
+        assert_eq!(calculate_strategic_score("High", "Medium", "Emerging"), 82);
+    }
+
+    #[test]
+    fn strategic_score_top10_top25_emerging() {
+        // hook=100(Top10%)*0.45 + share=60(Top25%)*0.35 + trend=80*0.20 = 45+21+16 = 82
+        assert_eq!(calculate_strategic_score("Top 10%", "Top 25%", "Emerging"), 82);
+    }
+
+    #[test]
+    fn strategic_score_high_top40_rising() {
+        // hook=100*0.45 + share=60(Top40%)*0.35 + trend=60*0.20 = 45+21+12 = 78
+        assert_eq!(calculate_strategic_score("High", "Top 40%", "Rising"), 78);
+    }
+
+    #[test]
+    fn strategic_score_case_insensitive() {
+        assert_eq!(
+            calculate_strategic_score("HIGH", "HIGH", "PEAKING"),
+            calculate_strategic_score("High", "High", "Peaking"),
+        );
+    }
+
+    #[test]
+    fn strategic_score_unknown_inputs_clamp_to_30_each() {
+        // all unknown → all 30 → 30
+        assert_eq!(calculate_strategic_score("garbage", "garbage", "garbage"), 30);
+    }
+
+    #[test]
+    fn strategic_score_medium_low_stable() {
+        // hook=60*0.45 + share=30*0.35 + trend=30*0.20 = 27+10.5+6 = 43.5 → 44
+        assert_eq!(calculate_strategic_score("Medium", "Low", "Stable"), 44);
+    }
+
+    #[test]
+    fn strategic_score_low_medium_rising() {
+        // hook=30*0.45 + share=60*0.35 + trend=60*0.20 = 13.5+21+12 = 46.5 → 47
+        assert_eq!(calculate_strategic_score("Low", "Medium", "Rising"), 47);
+    }
+
+    #[test]
+    fn strategic_score_high_high_emerging() {
+        // hook=100*0.45 + share=100*0.35 + trend=80*0.20 = 45+35+16 = 96
+        assert_eq!(calculate_strategic_score("High", "High", "Emerging"), 96);
+    }
 }
