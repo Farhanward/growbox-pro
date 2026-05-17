@@ -52,6 +52,14 @@ pub struct PostDraftInput {
     pub platform: String,
     pub media_path: Option<String>,
     pub media_note: String,
+    #[serde(default = "default_output_language")]
+    pub output_language: String,
+    #[serde(default)]
+    pub approved_publish_text: Option<String>,
+}
+
+fn default_output_language() -> String {
+    "ar".into()
 }
 
 #[tauri::command]
@@ -271,40 +279,52 @@ async fn generate_post_draft(
     if input.media_note.trim().is_empty() {
         return Err("أدخل وصف الصورة أو الفيديو حتى يستطيع النموذج تجهيز البوست.".into());
     }
-    let _guard = resource_manager::acquire("hermes", "تشغيل Hermes لصياغة المسودة النهائية.").await;
-    llm::start_server(&app).map_err(|e| format!("فشل تشغيل المحرّك: {e}"))?;
-    llm::wait_until_ready(60)
-        .await
-        .map_err(|e| format!("المحرّك لم يستجب: {e}"))?;
-
     let w = window.clone();
     let emit = move |stage: &str, msg: &str| {
         let _ = w.emit("report:progress", serde_json::json!({"stage": stage, "message": msg}));
     };
 
     emit("draft_start", "بدء اعتماد المسودة النهائية…");
-    let bundle = insights::gather(&app, &input.client, emit.clone())
-        .await
-        .map_err(|e| format!("فشل جمع البيانات العامة: {e}"))?;
-    emit("draft_context", "تنظيم بيانات الاستراتيجية والوسائط…");
-    let mut context = insights::build_context_block(&bundle, &input.client);
-    if let Ok(account) = oauth::collect_account_data(&input.platform).await {
-        context.push_str("\n## بيانات الحساب المرتبط\n");
-        context.push_str(&format!("- {}: {}\n", account.platform, account.summary));
-    }
-    if let Some(path) = &input.media_path {
-        context.push_str("\n## الوسائط المرفقة\n");
-        context.push_str(&format!("- ملف محلي مرفق للمراجعة اليدوية: {}\n", path));
-    }
-    if let Ok(Some(vision_note)) = vision::describe_media(&app, input.media_path.as_deref()).await {
-        context.push_str("\n");
-        context.push_str(&vision_note);
-    }
+    let content = if let Some(text) = input
+        .approved_publish_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        emit("draft_context", "حفظ البطاقة المعتمدة بدون إعادة توليد…");
+        approved_publish_markdown(text, &input.output_language)
+    } else {
+        let _guard = resource_manager::acquire("hermes", "تشغيل Hermes لصياغة المسودة النهائية.").await;
+        llm::start_server(&app).map_err(|e| format!("فشل تشغيل المحرّك: {e}"))?;
+        llm::wait_until_ready(60)
+            .await
+            .map_err(|e| format!("المحرّك لم يستجب: {e}"))?;
 
-    emit("draft_llm", "Hermes يكتب النسخة النهائية للبوست…");
-    let content = llm::generate_post_draft(&input.client, &context, &input.media_note)
-        .await
-        .map_err(|e| format!("فشل تجهيز البوست: {e}"))?;
+        let bundle = insights::gather(&app, &input.client, emit.clone())
+            .await
+            .map_err(|e| format!("فشل جمع البيانات العامة: {e}"))?;
+        emit("draft_context", "تنظيم بيانات الاستراتيجية والوسائط…");
+        let mut context = insights::build_context_block(&bundle, &input.client);
+        if let Ok(account) = oauth::collect_account_data(&input.platform).await {
+            context.push_str("\n## بيانات الحساب المرتبط\n");
+            context.push_str(&format!("- {}: {}\n", account.platform, account.summary));
+        }
+        if let Some(path) = &input.media_path {
+            context.push_str("\n## الوسائط المرفقة\n");
+            context.push_str(&format!("- ملف محلي مرفق للمراجعة اليدوية: {}\n", path));
+        }
+        if let Ok(Some(vision_note)) = vision::describe_media(&app, input.media_path.as_deref()).await {
+            context.push_str("\n");
+            context.push_str(&vision_note);
+        }
+
+        emit("draft_llm", "Hermes يكتب النسخة النهائية للبوست…");
+        let content = llm::generate_post_draft(&input.client, &context, &input.media_note, &input.output_language)
+            .await
+            .map_err(|e| format!("فشل تجهيز البوست: {e}"))?;
+        llm::shutdown_server();
+        content
+    };
 
     emit("draft_save", "حفظ المسودة في سجل البوستات…");
     let pool_guard = state.db.lock().await;
@@ -312,7 +332,7 @@ async fn generate_post_draft(
     let id = db::insert_client(pool, &input.client).await.map_err(|e| e.to_string())?;
     db::save_report(pool, id, &content).await.map_err(|e| e.to_string())?;
     emit("draft_ready", "تم تجهيز المسودة. افتح صفحة النشر الرسمية لإكمال الرفع.");
-    llm::shutdown_server();
+    resource_manager::forced_cleanup();
 
     Ok(ReportSummary {
         id,
@@ -321,6 +341,42 @@ async fn generate_post_draft(
         status: "ready".into(),
         content,
     })
+}
+
+fn approved_publish_markdown(text: &str, output_language: &str) -> String {
+    let mut caption_lines = Vec::new();
+    let mut hashtags = Vec::new();
+    for token in text.split_whitespace() {
+        if token.starts_with('#') {
+            let cleaned = token.trim_matches(|c: char| c == ',' || c == '.' || c == '،').to_string();
+            if !hashtags.contains(&cleaned) && hashtags.len() < 8 {
+                hashtags.push(cleaned);
+            }
+        }
+    }
+    for line in text.lines() {
+        let without_tags = line
+            .split_whitespace()
+            .filter(|part| !part.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !without_tags.trim().is_empty() {
+            caption_lines.push(without_tags);
+        }
+    }
+    if output_language.trim().eq_ignore_ascii_case("en") {
+        format!(
+            "## Ready Caption\n{}\n\n## Hashtags\n{}\n\n## Suggested Posting Time\nUse the approved strategic card timing.\n\n## Notes Before Publishing\n- Choose the media inside the platform.\n- Paste the copied caption and hashtags.\n- Review the first two seconds of the video before posting.",
+            caption_lines.join("\n").trim(),
+            hashtags.join(" ")
+        )
+    } else {
+        format!(
+            "## الكابشن الجاهز\n{}\n\n## الهاشتاقات\n{}\n\n## وقت النشر المقترح\nاستخدم وقت البطاقة الاستراتيجية المعتمدة.\n\n## ملاحظات للعميل قبل النشر\n- اختر الوسائط داخل المنصة.\n- الصق الكابشن والهاشتاقات المنسوخة.\n- راجع أول ثانيتين من الفيديو قبل النشر.",
+            caption_lines.join("\n").trim(),
+            hashtags.join(" ")
+        )
+    }
 }
 
 #[tauri::command]

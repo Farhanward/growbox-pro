@@ -195,6 +195,7 @@
   let operationDownload = $state<OperationDownload | null>(null);
 
   let selectedPlatform = $state<"instagram" | "tiktok">("instagram");
+  let appLanguage = $state<"ar" | "en">("ar");
   let oauthCode = $state("");
   let oauthMessage = $state("");
   let oauthError = $state("");
@@ -640,6 +641,7 @@
       platform: selectedPlatform,
       media_path: mediaPath || null,
       media_note: mediaNote,
+      output_language: appLanguage,
       client: {
         name: name.trim(),
         tiktok: tiktok.trim() || null,
@@ -909,7 +911,7 @@
     try {
       if (!publishText.trim()) publishText = previewPublishText();
       const r = await invoke<Report>("generate_post_draft", {
-        input: draftInput(),
+        input: { ...draftInput(), approved_publish_text: limitPublishTags(publishText) },
       });
       viewingId = r.id;
       viewingContent = r.content;
@@ -967,7 +969,7 @@
   }
 
   async function openPublishPages() {
-    const text = publishText.trim() || extractPublishText(viewingContent);
+    const text = limitPublishTags(publishText.trim() || extractPublishText(viewingContent));
     if (text) await copyText(text, "تم نسخ الكابشن والهاشتاقات. الصقه في صفحة النشر بعد اختيار الوسائط.");
     try {
       const accountLabel = isolatedProfileLabel(selectedPlatform);
@@ -975,7 +977,7 @@
         platform: selectedPlatform,
         accountLabel,
       });
-      browserMessage = `تم فتح صفحة نشر ${selectedPlatform === "instagram" ? "Instagram" : "TikTok"} بالبروفايل نفسه. اختر الوسائط ثم الصق الكابشن المنسوخ واضغط نشر بنفسك.`;
+      browserMessage = `تم فتح صفحة نشر ${selectedPlatform === "instagram" ? "Instagram" : "TikTok"} بالبروفايل نفسه، وتم نسخ الكابشن للحافظة. اختر الوسائط ثم الصقه في خانة الوصف.`;
     } catch (e) {
       formError = String(e);
     }
@@ -984,19 +986,34 @@
   function cardPublishText(card: PublishingCard) {
     const tags = [...card.content_payload.hashtags.velocity, ...card.content_payload.hashtags.relevance]
       .filter((tag, index, all) => tag && all.indexOf(tag) === index)
+      .slice(0, 8)
       .join(" ");
     return `${card.content_payload.caption.trim()}\n\n${tags}`.trim();
   }
 
   function previewPublishText() {
     if (!activePreview) return "";
-    return `${activePreview.caption.trim()}\n\n${activePreview.hashtags.join(" ")}`.trim();
+    return `${activePreview.caption.trim()}\n\n${activePreview.hashtags.slice(0, 8).join(" ")}`.trim();
+  }
+
+  function limitPublishTags(text: string) {
+    const tags: string[] = [];
+    const captionParts: string[] = [];
+    for (const part of text.split(/\s+/)) {
+      if (part.startsWith("#")) {
+        const cleaned = part.replace(/[،,.]+$/g, "");
+        if (cleaned && !tags.includes(cleaned) && tags.length < 8) tags.push(cleaned);
+      } else if (part.trim()) {
+        captionParts.push(part);
+      }
+    }
+    return `${captionParts.join(" ").trim()}\n\n${tags.join(" ")}`.trim();
   }
 
   function extractPublishText(markdown: string) {
     if (!markdown.trim()) return "";
-    const caption = markdown.match(/##\s*الكابشن الجاهز\s*([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() ?? "";
-    const hashtags = markdown.match(/##\s*الهاشتاقات\s*([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() ?? "";
+    const caption = markdown.match(/##\s*(?:الكابشن الجاهز|Ready Caption)\s*([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() ?? "";
+    const hashtags = markdown.match(/##\s*(?:الهاشتاقات|Hashtags)\s*([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() ?? "";
     return `${caption}\n\n${hashtags}`.trim() || markdown.trim();
   }
 
@@ -1082,17 +1099,27 @@
   );
 </script>
 
-<div class="min-h-screen" dir="rtl">
+<div class="min-h-screen" dir={appLanguage === "ar" ? "rtl" : "ltr"}>
   <header class="vibrancy sticky top-0 z-10 px-6 py-4">
     <div class="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-4">
       <div class="flex items-center gap-3">
         <img src="/growbox-brand.png" alt="GrowBox Pro" class="w-11 h-11 rounded-lg object-cover" />
         <div>
           <h1 class="text-[18px] font-semibold leading-tight">GrowBox Pro</h1>
-          <p class="text-[12px]" style="color: var(--text-2)">مسار نشر محلي منظم، خطوة بعد خطوة</p>
+          <p class="text-[12px]" style="color: var(--text-2)">
+            {appLanguage === "ar" ? "مسار نشر محلي منظم، خطوة بعد خطوة" : "A local-first publishing workflow, step by step"}
+          </p>
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-2">
+        <div class="pill gap-1" aria-label="Language">
+          <button class="btn btn-ghost btn-small" aria-pressed={appLanguage === "ar"} onclick={() => { appLanguage = "ar"; assistantResult = null; publishText = ""; }}>
+            العربية
+          </button>
+          <button class="btn btn-ghost btn-small" aria-pressed={appLanguage === "en"} onclick={() => { appLanguage = "en"; assistantResult = null; publishText = ""; }}>
+            English
+          </button>
+        </div>
         <span class="pill">
           <span class="status-dot" style="background: {license?.active ? 'var(--success)' : 'var(--danger)'}"></span>
           {license?.active ? `اشتراك فعال · ${license.days_remaining} يوم` : "غير مفعل"}

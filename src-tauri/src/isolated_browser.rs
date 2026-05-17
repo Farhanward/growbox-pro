@@ -167,7 +167,7 @@ fn platform_url(platform: &str) -> &'static str {
 
 fn publish_url(platform: &str) -> Result<&'static str> {
     match platform {
-        "instagram" => Ok("https://www.instagram.com/"),
+        "instagram" => Ok("https://www.instagram.com/create/select/"),
         "tiktok" => Ok("https://www.tiktok.com/upload"),
         _ => Err(anyhow!("منصة غير مدعومة")),
     }
