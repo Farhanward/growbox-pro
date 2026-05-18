@@ -48,6 +48,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # ── Sync playwright-core into src-tauri/resources (required by tauri.conf.json glob) ──
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS deps
+        run: npm ci --prefer-offline
+
+      - name: Sync Playwright resource into src-tauri
+        run: node scripts/sync-playwright-resource.mjs
+
       # ── Run all #[cfg(test)] modules ──────────────────────────────────────────
       - name: Run unit tests
         working-directory: src-tauri
